@@ -6,6 +6,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { HINTS_OPEN_MS } from "./constants";
 
+// tiny line-art icons for the two-hand shapes
+const ShapeIcon = ({ d }: { d: string }) => (
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d={d} />
+  </svg>
+);
+
 export default function GestureHints() {
   const [open, setOpen] = useState(true);
 
@@ -22,8 +29,8 @@ export default function GestureHints() {
   return (
     <div data-testid="gesture-hints" data-open={open} className="font-hand fixed bottom-5 right-5 z-10 text-[#1d1b16]">
       {open ? (
-        <div className="w-[250px] rotate-[-1deg] rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3 shadow-[4px_5px_0_rgba(0,0,0,0.45)]">
-          <div className="mb-1.5 flex items-center justify-between">
+        <div className="w-[290px] rotate-[-1deg] rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3 shadow-[4px_5px_0_rgba(0,0,0,0.45)]">
+          <div className="mb-1 flex items-center justify-between">
             <b className="font-toon text-sm">How to draw</b>
             <button
               type="button"
@@ -34,10 +41,19 @@ export default function GestureHints() {
               ×
             </button>
           </div>
-          <ul className="flex flex-col gap-1.5">
-            <Hint emoji="☝️" title="Draw">point your index finger, other fingers curled</Hint>
-            <Hint emoji="🤏" title="Undo">pinch twice quickly</Hint>
-            <Hint emoji="👋" title="Clear">flick an open hand across</Hint>
+          <ul className="flex flex-col gap-1">
+            <Hint icon="☝️" title="Draw">point your index finger, other fingers curled</Hint>
+            <Hint icon="🤏" title="Undo">pinch twice quickly</Hint>
+            <Hint icon="👋" title="Clear">flick an open hand across</Hint>
+            <Hint icon="✋" title="Colour">hold an open palm still, tilt to choose, fist to pick</Hint>
+          </ul>
+          <div className="font-toon mb-0.5 mt-2 text-[11px] font-semibold uppercase tracking-wider text-[#1d1b16]/50">
+            Two hands · pull apart to stretch, let go to place
+          </div>
+          <ul className="flex flex-col gap-1">
+            <Hint icon={<ShapeIcon d="M4 19L20 5" />} title="Line">pinch with both hands</Hint>
+            <Hint icon={<ShapeIcon d="M4 5h16v14H4z" />} title="Rectangle">an L with each hand; fingertips are the corners</Hint>
+            <Hint icon={<ShapeIcon d="M12 4l9 16H3z" />} title="Triangle">touch index tips and thumb tips together</Hint>
           </ul>
         </div>
       ) : (
@@ -53,10 +69,10 @@ export default function GestureHints() {
   );
 }
 
-function Hint({ emoji, title, children }: { emoji: string; title: string; children: ReactNode }) {
+function Hint({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return (
-    <li className="flex items-start gap-2 text-[1.02rem] leading-tight">
-      <span className="w-6 text-xl leading-none" aria-hidden>{emoji}</span>
+    <li className="flex items-start gap-2 text-[1rem] leading-tight">
+      <span className="flex w-6 shrink-0 justify-center text-xl leading-none" aria-hidden>{icon}</span>
       <span><b className="font-toon text-[13px]">{title}</b> · {children}</span>
     </li>
   );
