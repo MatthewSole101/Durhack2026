@@ -143,6 +143,8 @@ export type AirDrawOptions = {
   onToast: (msg: string) => void;
   onError: (msg: string) => void;
   onPointer?: (p: Pointer) => void;
+  /** The drawing changed: "drawing" while a stroke grows, "settled" on stroke end, shape, undo and clear. */
+  onStrokes?: (state: "drawing" | "settled") => void;
 };
 
 export type AirDrawEngine = {
@@ -157,10 +159,18 @@ export type AirDrawEngine = {
   setMode: (mode: AirDrawMode) => void;
   undo: () => void;
   clearAll: () => void;
+  /**
+   * The drawing as the player sees it (mirrored), one point list per stroke; closed shapes
+   * repeat their first point. Both axes are divided by the same number, so the aspect ratio
+   * is kept and every coordinate is in 0..1.
+   */
+  getStrokes: () => Pt[][];
+  /** Wipe the drawing and its undo history without any feedback (the next word starts). */
+  reset: () => void;
   destroy: () => void;
 };
 
-export function createAirDraw({ video, canvas, onToast, onError, onPointer }: AirDrawOptions): AirDrawEngine {
+export function createAirDraw({ video, canvas, onToast, onError, onPointer, onStrokes }: AirDrawOptions): AirDrawEngine {
   const ctx = canvas.getContext("2d")!;
   let landmarker: HandLandmarker | null = null;
   let connections: { start: number; end: number }[] = [];
@@ -277,6 +287,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
       history.splice(history.findIndex(h => h.type === "stroke" && h.stroke === st), 1);
     }
     slot.stroke = null; slot.fx.reset(); slot.fy.reset();
+    if (st.pts.length) onStrokes?.("settled");
   }
   function undo() {
     // most recent finished action (skip strokes still being drawn)
@@ -286,6 +297,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
       history.splice(i, 1);
       if (h.type === "stroke") { strokes.splice(strokes.indexOf(h.stroke), 1); toast("↩ Undo"); }
       else { strokes.push(...h.saved); toast("↩ Restored"); }
+      onStrokes?.("settled");
       return;
     }
     toast("Nothing to undo");
@@ -295,6 +307,19 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     if (!strokes.length) return;
     history.push({ type: "clear", saved: strokes.splice(0) });
     toast("✨ Cleared");
+    onStrokes?.("settled");
+  }
+  function reset() {
+    slots.forEach(endStroke);
+    strokes.length = 0; history.length = 0;
+    shape = null; resetArming();
+  }
+  function getStrokes(): Pt[][] {
+    const vw = video.videoWidth, m = Math.max(vw, video.videoHeight) || 1;
+    return strokes.filter(s => s.pts.length).map(s => {
+      const pts = s.shape && s.shape !== "line" ? [...s.pts, s.pts[0]] : s.pts; // rect / tri are closed
+      return pts.map(([x, y]): Pt => [(vw - x) / m, y / m]);
+    });
   }
 
   // ---------------- per-hand gesture analysis ----------------
@@ -361,7 +386,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     else if (s.pointing && pose && t >= armAt) {
       s.stroke ??= addStroke({ pts: [], active: true, color: penColor });
       const last = s.stroke.pts.at(-1);
-      if (!last || dist(s.tip, last) > 1.5) s.stroke.pts.push(s.tip);
+      if (!last || dist(s.tip, last) > 1.5) { s.stroke.pts.push(s.tip); onStrokes?.("drawing"); }
     }
 
     // 🤏🤏 double pinch → undo
@@ -469,6 +494,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     const xs = sh.pts.map(p => p[0]), ys = sh.pts.map(p => p[1]);
     if (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) < SHAPE_MIN_PX) return;
     addStroke({ pts: sh.pts, active: false, color: penColor, shape: sh.kind });
+    onStrokes?.("settled");
   }
 
   function updateShapes(f: Fit, hands: HandInfo[], t: number) {
@@ -653,5 +679,5 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     landmarker = null; // shared across mounts; lives for the page (see loadLandmarker)
   }
 
-  return { load, start, setMode, undo, clearAll, destroy };
+  return { load, start, setMode, undo, clearAll, getStrokes, reset, destroy };
 }

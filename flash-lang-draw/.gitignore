@@ -42,3 +42,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# LiteRT.js wasm runtime: copied from node_modules by scripts/copy-litert-wasm.mjs
+/public/wasm/
+
+# local Python environment for model experiments
+/training/.venv/

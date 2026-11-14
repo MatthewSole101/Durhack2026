@@ -19,7 +19,7 @@ export default defineConfig({
   },
   webServer: {
     // test build: exposes window.__airDraw and accepts window.__airDrawMock (see features/air-draw/engine.ts)
-    command: `npx next dev -p ${PORT}`,
+    command: `node scripts/copy-litert-wasm.mjs && npx next dev -p ${PORT}`,
     env: { NEXT_PUBLIC_AIR_DRAW_TEST: "1", NEXT_DIST_DIR: ".next-e2e" },
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,

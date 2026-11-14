@@ -1,0 +1,122 @@
+"use client";
+
+// In-game overlay: the flashcard with the word to draw (top) and an optional debug panel
+// showing what the classifier sees and guesses.
+
+import { useEffect, useRef } from "react";
+import { INPUT_SIZE } from "@/features/quickdraw/constants";
+import type { LabelSource } from "@/features/quickdraw/labels";
+import type { Prediction } from "@/features/quickdraw/predictor";
+import { Flag } from "@/features/languages/Flag";
+import { type LangCode, languageByCode } from "@/features/languages/languages";
+import type { Word } from "@/features/languages/words";
+
+export type ClassifierStatus =
+  | { state: "runtime" | "compiling" }
+  | { state: "ready"; name: string; inputShape: number[]; dtype: string; labelSource: LabelSource }
+  | { state: "error"; message: string };
+
+/** The flashcard prompt: what to draw, in the language being learnt. */
+export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: LangCode; solved: boolean; onSkip: () => void }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
+      <div
+        data-testid="word-card"
+        data-lang={lang}
+        data-word={word.id}
+        data-solved={solved}
+        role="status"
+        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2 pt-2.5 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
+          solved ? "bg-[#b9efb0]" : "bg-[#fffdf5]"
+        }`}
+      >
+        <div className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
+          <Flag code={lang} width={21} height={14} />
+          {solved ? "Correct!" : "Draw this"} · {languageByCode(lang).name}
+        </div>
+        <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
+          {solved && <span aria-hidden>✓ </span>}
+          <span lang={lang} data-testid="word">{word[lang]}</span>
+        </div>
+        <div className="font-hand text-lg leading-tight text-[#1d1b16]/55">{word.en}</div>
+      </div>
+      {!solved && (
+        <button
+          type="button"
+          onClick={onSkip}
+          className="font-hand pointer-events-auto cursor-pointer rounded-full bg-[#0f1115]/45 px-3 py-0.5 text-base text-white/85 backdrop-blur-sm transition hover:bg-[#0f1115]/70 hover:text-white"
+        >
+          skip ›
+        </button>
+      )}
+    </div>
+  );
+}
+
+function statusLine(s: ClassifierStatus) {
+  switch (s.state) {
+    case "runtime": return "Loading runtime…";
+    case "compiling": return "Compiling model…";
+    case "ready": return `Ready — ${s.name} · [${s.inputShape.join(", ")}] ${s.dtype} · labels: ${s.labelSource}`;
+    case "error": return s.message;
+  }
+}
+
+const PREVIEW_SCALE = 4;
+
+export function DebugPanel({ status, prediction }: { status: ClassifierStatus; prediction: Prediction }) {
+  const previewRef = useRef<HTMLCanvasElement>(null);
+  const { guesses, input } = prediction;
+
+  // the real 28×28 model input, upscaled by CSS with image-rendering: pixelated
+  useEffect(() => {
+    const ctx = previewRef.current?.getContext("2d");
+    if (!ctx) return;
+    const img = ctx.createImageData(INPUT_SIZE, INPUT_SIZE);
+    for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
+      const v = Math.round((input?.[i] ?? 0) * 255);
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [input]);
+
+  return (
+    <aside
+      data-testid="quickdraw-debug"
+      className="fixed left-4 top-20 w-72 rounded-xl border border-white/15 bg-[#0f1115]/75 p-3 text-xs text-[#f2f4f8] backdrop-blur-md"
+    >
+      <p data-testid="quickdraw-status" data-state={status.state} className={status.state === "error" ? "text-[#ff9b8f]" : "text-white/70"}>
+        {statusLine(status)}
+      </p>
+      <div className="mt-2 flex gap-3">
+        <figure className="shrink-0">
+          <canvas
+            ref={previewRef}
+            width={INPUT_SIZE}
+            height={INPUT_SIZE}
+            data-testid="quickdraw-preview"
+            className="rounded border border-white/20 [image-rendering:pixelated]"
+            style={{ width: INPUT_SIZE * PREVIEW_SCALE, height: INPUT_SIZE * PREVIEW_SCALE }}
+          />
+          <figcaption className="mt-1 text-[10px] text-white/55">What the model sees</figcaption>
+        </figure>
+        <ol data-testid="quickdraw-guesses" className="min-w-0 flex-1 space-y-1">
+          {guesses.length === 0 && <li className="text-white/45">Draw something…</li>}
+          {guesses.map((g, i) => (
+            <li key={g.label} className={i === 0 ? "font-semibold text-white" : "text-white/75"}>
+              <div className="flex justify-between gap-2">
+                <span className="truncate">{i + 1}. {g.label}</span>
+                <span className="tabular-nums">{(g.prob * 100).toFixed(1)}%</span>
+              </div>
+              <div className="mt-0.5 h-1 rounded-full bg-white/10">
+                <div className={`h-full rounded-full ${i === 0 ? "bg-[#4fd1c5]" : "bg-white/40"}`} style={{ width: `${g.prob * 100}%` }} />
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <p className="mt-2 text-[10px] text-white/45">D hides this panel · N skips the word</p>
+    </aside>
+  );
+}

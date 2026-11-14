@@ -62,3 +62,5 @@ export const RECT_MIN_GAP = 1.2; // L-pose fingertips must be at least this × p
 export const SQUARE_SNAP = 0.15; // rectangles within 15% of square snap to a square
 export const SHAPE_MIN_PX = 24; // shapes smaller than this (video px) are dropped
 export const SHAPE_COOLDOWN_MS = 500; // after placing a shape, before another can start
+
+export const SOLVED_MS = 1600; // how long a solved word stays up before the next one
