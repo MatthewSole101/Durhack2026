@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { DRAW_ARM_MS } from "../features/air-draw/constants";
 
 // There is no real hand in CI, so the gesture logic is driven by a mock landmarker that
 // returns scripted synthetic hands. Scenes are timed inside the page (gestures are
@@ -6,9 +7,14 @@ import { expect, test, type Page } from "@playwright/test";
 
 declare global {
   interface Window {
-    __airDraw: { strokes: { pts: [number, number][]; active: boolean }[]; toasts: string[] };
+    __airDraw: {
+      strokes: { pts: [number, number][]; active: boolean }[];
+      toasts: string[];
+      screenToVideo: (x: number, y: number) => [number, number];
+    };
     __airDrawMock: unknown;
     __play: (scene: string) => void;
+    __hover: (nx: number, ny: number, ms: number) => void;
     __sceneDone: boolean;
     __detectCalls: number;
   }
@@ -17,13 +23,14 @@ declare global {
 function installMock() {
   type Thumb = "out" | "tucked" | "pinch";
   type P = [number, number, number];
-  type HandSpec = { ext: [boolean, boolean, boolean, boolean]; thumb: Thumb; dx?: number };
+  // tipAt: put the index fingertip (of a pointing hand) at these normalised video coords
+  type HandSpec = { ext: [boolean, boolean, boolean, boolean]; thumb: Thumb; dx?: number; tipAt?: [number, number] };
 
   const MCP: P[] = [[-30, -95, 0], [0, -100, 0], [28, -92, 0], [52, -80, 0]]; // index, middle, ring, pinky
   const add = (a: P, b: P): P => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
   // Hand in "palm = 100 units" space, wrist at the origin, fingers pointing up (−y).
-  function hand({ ext, thumb, dx = 0 }: HandSpec, vw: number, vh: number) {
+  function hand({ ext, thumb, dx = 0, tipAt }: HandSpec, vw: number, vh: number) {
     const pts: P[] = [[0, 0, 0], [-35, -25, 0], [-60, -50, 0], [-80, -70, 0], [0, 0, 0]];
     MCP.forEach((m, i) => {
       pts.push(m);
@@ -32,7 +39,9 @@ function installMock() {
     });
     pts[4] = thumb === "out" ? [-130, -90, 0] : thumb === "tucked" ? [-8, -92, -30] : pts[8]; // pinch = on the index tip
     const k = vh / 720; // 100 units ≈ 100 px on a 720p frame
-    const ox = vw * (0.3 + dx), oy = vh * 0.7;
+    // extended index tip sits at (-30, -185) units from the wrist
+    const ox = tipAt ? tipAt[0] * vw + 30 * k : vw * (0.3 + dx);
+    const oy = tipAt ? tipAt[1] * vh + 185 * k : vh * 0.7;
     return pts.map(([x, y, z]) => ({ x: (ox + x * k) / vw, y: (oy + y * k) / vh, z: (z * k) / vw, visibility: 0 }));
   }
 
@@ -55,6 +64,10 @@ function installMock() {
   window.__sceneDone = true;
   window.__detectCalls = 0;
   window.__play = name => { scene = scenes[name]; t0 = performance.now(); window.__sceneDone = false; };
+  window.__hover = (nx, ny, ms) => {
+    scene = e => (e > ms ? null : [{ ext: POINT, thumb: "tucked", tipAt: [nx, ny] }]);
+    t0 = performance.now(); window.__sceneDone = false;
+  };
 
   window.__airDrawMock = {
     FilesetResolver: { forVisionTasks: async () => ({}) },
@@ -82,6 +95,14 @@ async function play(page: Page, scene: string) {
   const n = await page.evaluate(() => window.__detectCalls);
   await page.waitForFunction(k => window.__detectCalls > k + 1, n);
 }
+// hold a pointing fingertip over the centre of an element for `ms` (scene runs in the page)
+async function hoverHand(page: Page, target: Locator, ms: number) {
+  const box = (await target.boundingBox())!;
+  await page.evaluate(([x, y, ms]) => {
+    const [nx, ny] = window.__airDraw.screenToVideo(x, y);
+    window.__hover(nx, ny, ms);
+  }, [box.x + box.width / 2, box.y + box.height / 2, ms]);
+}
 const strokeCount = (page: Page) => page.evaluate(() => window.__airDraw.strokes.length);
 const lastToast = (page: Page) => page.evaluate(() => window.__airDraw.toasts.at(-1));
 
@@ -97,11 +118,12 @@ test("gestures: draw, thumb-out guard, double-pinch undo, flick clear, restore",
   await page.addInitScript(installMock);
   await page.goto("/");
 
-  const startBtn = page.getByRole("button", { name: "Start camera" });
+  const startBtn = page.getByRole("button", { name: "Start drawing" });
   await expect(startBtn).toBeEnabled();
   await startBtn.click();
   await expect(page.getByTestId("start-screen")).toBeHidden();
   await page.waitForFunction(() => window.__detectCalls > 3);
+  await page.waitForTimeout(DRAW_ARM_MS); // the pen is held up briefly after Start
 
   await play(page, "pointTucked"); // 1. point with thumb tucked while moving
   expect(await strokeCount(page)).toBe(1);
@@ -137,15 +159,53 @@ test("gestures: draw, thumb-out guard, double-pinch undo, flick clear, restore",
   expect(errors).toEqual([]);
 });
 
+test("start screen: pick a language and press Start with a hand", async ({ page }) => {
+  const errors = trackErrors(page);
+  await page.addInitScript(installMock);
+  await page.goto("/");
+
+  const startBtn = page.getByRole("button", { name: "Start drawing" });
+  await expect(startBtn).toBeEnabled();
+  await page.waitForFunction(() => window.__detectCalls > 3); // menu-mode tracking is running
+  await expect(page.getByRole("radio", { name: /Español/ })).toHaveAttribute("aria-checked", "true");
+
+  // hover French: a French flag is painted in next to the finger, then it's selected
+  const french = page.getByRole("radio", { name: /Français/ });
+  const cursor = page.getByTestId("hand-cursor");
+  await hoverHand(page, french, 1700);
+  await expect(cursor).toHaveAttribute("data-state", "dwell");
+  await expect(cursor).toHaveAttribute("data-flag", "fr");
+  await expect(page.getByTestId("hand-cursor-flag")).toBeVisible();
+  await expect(french).toHaveAttribute("data-hand-hover", "");  await expect(french).toHaveAttribute("aria-checked", "true");
+  await expect(cursor).toHaveAttribute("data-state", "done");
+  await page.waitForFunction(() => window.__sceneDone);
+  await expect(cursor).toHaveAttribute("data-state", "hidden"); // hand gone
+
+  // hover Start (a plain ring this time): the drawing screen opens with a French word to draw
+  await hoverHand(page, startBtn, 1700);
+  await expect(cursor).toHaveAttribute("data-state", "dwell");
+  await expect(cursor).not.toHaveAttribute("data-flag");
+  await expect(page.getByTestId("start-screen")).toBeHidden();
+  const card = page.getByTestId("word-card");
+  await expect(card).toHaveAttribute("data-lang", "fr");
+  await expect(card).toContainText("Français");
+  // the gesture cheat-sheet is open when the drawing page opens
+  await expect(page.getByTestId("gesture-hints")).toHaveAttribute("data-open", "true");
+  await expect(page.getByTestId("gesture-hints")).toContainText("pinch twice quickly");
+  await page.waitForFunction(() => window.__sceneDone);  // the finger that pressed Start was still pointing, but the pen stays up for a moment
+  expect(await strokeCount(page)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 // Needs network: downloads the real WASM runtime and model from the CDN.
 test("real MediaPipe model loads and runs on camera frames", async ({ page }) => {
   const errors = trackErrors(page);
   await page.goto("/");
 
-  const startBtn = page.getByRole("button", { name: /Loading model|Start camera/ });
+  const startBtn = page.getByRole("button", { name: /Loading model|Start drawing/ });
   await expect(startBtn).toHaveText("Loading model…");
   await expect(startBtn).toBeDisabled();
-  await expect(startBtn).toHaveText("Start camera", { timeout: 45_000 });
+  await expect(startBtn).toHaveText("Start drawing", { timeout: 45_000 });
   await startBtn.click();
   await expect(page.getByTestId("start-screen")).toBeHidden();
 

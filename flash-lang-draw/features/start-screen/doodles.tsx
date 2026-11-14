@@ -98,12 +98,13 @@ export const DOODLES: Doodle[] = [
   },
 ];
 
-export function DoodleCard({ d }: { d: Doodle }) {
+export function DoodleCard({ d, dim = false }: { d: Doodle; dim?: boolean }) {
   return (
     <div
       aria-hidden
-      className={`lt-doodle pointer-events-none absolute flex-col items-center ${d.wideOnly ? "hidden md:flex" : "flex"}`}
+      className={`lt-doodle pointer-events-none absolute flex-col items-center transition-opacity duration-500 ${d.wideOnly ? "hidden md:flex" : "flex"}`}
       style={{
+        opacity: dim ? 0.3 : 1,
         left: `clamp(56px, ${d.left}%, calc(100% - 56px))`,
         top: `${d.top}%`,
         "--rot": `${d.rotate}deg`,
