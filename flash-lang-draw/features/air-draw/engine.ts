@@ -3,7 +3,7 @@
 
 import type { HandLandmarker, HandLandmarkerResult, NormalizedLandmark } from "@mediapipe/tasks-vision";
 import {
-  CURL_MAX, CURL_OFF, DOUBLE_GAP_MS, EXT_OFF, EXT_ON, FLICK_COOLDOWN_MS, FLICK_DIST, FLICK_WINDOW_MS,
+  CURL_MAX, CURL_OFF, DOUBLE_GAP_MS, DRAW_ARM_MS, EXT_OFF, EXT_ON, FLICK_COOLDOWN_MS, FLICK_DIST, FLICK_WINDOW_MS,
   MODEL_URL, PEN_COLOR, PEN_SIZE, PINCH_OFF, PINCH_ON, POSE_FRAMES, TAP_MAX_MS, THUMB_CLOSED, THUMB_OPEN,
   WASM_BASE,
 } from "./constants";
@@ -29,7 +29,7 @@ type HandInfo = { lm: NormalizedLandmark[]; slot: Slot };
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
 type TestWindow = Window & {
   __airDrawMock?: Vision;
-  __airDraw?: { strokes: Stroke[]; toasts: string[] };
+  __airDraw?: { strokes: Stroke[]; toasts: string[]; screenToVideo?: (x: number, y: number) => Pt };
 };
 
 const FINGERS = { index: [5, 6, 8], middle: [9, 10, 12], ring: [13, 14, 16], pinky: [17, 18, 20] } as const; // mcp, pip, tip
@@ -101,30 +101,48 @@ function loadLandmarker(): Promise<Shared> {
   return sharedLandmarker;
 }
 
+/** Screen position (CSS px) of the index fingertip, or null when no hand is in view. */
+export type Pointer = { x: number; y: number } | null;
+
+/**
+ * "menu": track the fingertip and report it through onPointer; nothing is drawn.
+ * "draw": the full gesture set, rendered to the canvas.
+ */
+export type AirDrawMode = "menu" | "draw";
+
 export type AirDrawOptions = {
   video: HTMLVideoElement;
   canvas: HTMLCanvasElement;
   onToast: (msg: string) => void;
   onError: (msg: string) => void;
+  onPointer?: (p: Pointer) => void;
 };
 
 export type AirDrawEngine = {
   /** Download the WASM runtime + model. Resolves when the landmarker is ready. */
   load: () => Promise<void>;
-  /** Ask for the camera and begin the frame loop. Rejects if the camera is unavailable. */
-  start: () => Promise<void>;
+  /**
+   * Ask for the camera and begin the frame loop (tracking starts once the model is loaded).
+   * Safe to call repeatedly. Resolves with the live stream; rejects if the camera is unavailable.
+   */
+  start: () => Promise<MediaStream>;
+  setMode: (mode: AirDrawMode) => void;
   undo: () => void;
   clearAll: () => void;
   destroy: () => void;
 };
 
-export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOptions): AirDrawEngine {
+export function createAirDraw({ video, canvas, onToast, onError, onPointer }: AirDrawOptions): AirDrawEngine {
   const ctx = canvas.getContext("2d")!;
   let landmarker: HandLandmarker | null = null;
   let connections: { start: number; end: number }[] = [];
   let stream: MediaStream | null = null;
+  let starting: Promise<MediaStream> | null = null;
   let raf = 0, destroyed = false;
   let W = 0, H = 0;
+  let mode: AirDrawMode = "menu";
+  let armAt = 0; // pen stays up until this time (see DRAW_ARM_MS)
+  const cursorFx = new OneEuro(), cursorFy = new OneEuro();
 
   const strokes: Stroke[] = [];
   const history: HistoryEntry[] = [];
@@ -133,7 +151,14 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
 
   let toast = onToast;
   if (TEST_BUILD) {
-    const hook = { strokes, toasts: [] as string[] };
+    const hook = {
+      strokes, toasts: [] as string[],
+      // inverse of toScreen: screen px → normalised video coords, so tests can aim a mock fingertip
+      screenToVideo: (x: number, y: number): Pt => {
+        const f = fit();
+        return [(f.ox + f.dw - x) / f.s / f.vw, (y - f.oy) / f.s / f.vh];
+      },
+    };
     (window as TestWindow).__airDraw = hook;
     toast = msg => { hook.toasts.push(msg); onToast(msg); };
   }
@@ -171,20 +196,33 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
     connections = shared.connections;
   }
 
-  async function start() {
-    if (stream) return;
-    const s = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, audio: false,
-    });
-    if (destroyed) { s.getTracks().forEach(t => t.stop()); return; }
-    video.srcObject = s;
-    await new Promise<void>(r => {
-      if (video.readyState >= 1) r();
-      else video.addEventListener("loadedmetadata", () => r(), { once: true });
-    });
-    await video.play();
-    stream = s;
-    raf = requestAnimationFrame(loop);
+  function start() {
+    starting ??= (async () => {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, audio: false,
+      });
+      if (destroyed) { s.getTracks().forEach(t => t.stop()); throw new Error("Air Draw was closed"); }
+      video.srcObject = s;
+      await new Promise<void>(r => {
+        if (video.readyState >= 1) r();
+        else video.addEventListener("loadedmetadata", () => r(), { once: true });
+      });
+      await video.play();
+      stream = s;
+      raf = requestAnimationFrame(loop);
+      return s;
+    })();
+    starting.catch(() => { starting = null; }); // allow a retry (e.g. after the user grants permission)
+    return starting;
+  }
+
+  function setMode(m: AirDrawMode) {
+    if (m === mode) return;
+    mode = m;
+    slots.forEach(endStroke);
+    slots = []; lastInfo = null;
+    cursorFx.reset(); cursorFy.reset();
+    if (m === "draw") armAt = performance.now() + DRAW_ARM_MS;
   }
 
   // ---------------- drawing actions ----------------
@@ -270,7 +308,7 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
 
     const tip = px(f, lm[8]);
     s.tip = [s.fx.filter(tip[0], t), s.fy.filter(tip[1], t)];
-    if (s.pointing && pose) {
+    if (s.pointing && pose && t >= armAt) {
       s.stroke ??= beginStroke();
       const last = s.stroke.pts.at(-1);
       if (!last || dist(s.tip, last) > 1.5) s.stroke.pts.push(s.tip);
@@ -307,6 +345,14 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
     const hands = result.landmarks;
     trackHands(hands.map(lm => px(f, lm[0])));
     return hands.map((lm, i) => analyse(f, lm, slots[i], t));
+  }
+
+  // menu mode: the first hand's index fingertip is the cursor, whatever the pose
+  function trackPointer(result: HandLandmarkerResult, f: Fit, t: number) {
+    const lm = result.landmarks[0];
+    if (!lm) { cursorFx.reset(); cursorFy.reset(); onPointer?.(null); return; }
+    const [x, y] = toScreen(f, cursorFx.filter(lm[8].x * f.vw, t), cursorFy.filter(lm[8].y * f.vh, t));
+    onPointer?.({ x, y });
   }
 
   // ---------------- rendering ----------------
@@ -365,11 +411,14 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
       lastVideoTime = video.currentTime;
       const t = performance.now(); // must increase on every detectForVideo call
       try {
-        lastInfo = process(landmarker.detectForVideo(video, t), f, t);
+        const result = landmarker.detectForVideo(video, t);
+        if (mode === "menu") trackPointer(result, f, t);
+        else lastInfo = process(result, f, t);
       } catch (e) {
         onError("Hand tracking error: " + (e instanceof Error ? e.message : String(e)));
       }
     }
+    if (mode === "menu") return; // the start screen covers the canvas
 
     ctx.save(); ctx.translate(f.ox + f.dw, f.oy); ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, f.dw, f.dh); ctx.restore();
@@ -389,5 +438,5 @@ export function createAirDraw({ video, canvas, onToast, onError }: AirDrawOption
     landmarker = null; // shared across mounts; lives for the page (see loadLandmarker)
   }
 
-  return { load, start, undo, clearAll, destroy };
+  return { load, start, setMode, undo, clearAll, destroy };
 }

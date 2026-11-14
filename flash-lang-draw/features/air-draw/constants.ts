@@ -29,3 +29,10 @@ export const FLICK_DIST = 0.16; // hand must travel this fraction of the frame w
 export const FLICK_COOLDOWN_MS = 1200;
 
 export const TOAST_MS = 900;
+
+// start screen: buttons are pressed by holding the index fingertip over them
+export const DWELL_MS = 1200; // how long to hover before the press fires
+export const POINTER_LOST_MS = 300; // tracking can drop a frame or two without resetting the dwell
+export const DRAW_ARM_MS = 800; // after Start, ignore the pen briefly so the pressing finger doesn't draw
+
+export const HINTS_OPEN_MS = 9000; // gesture cheat-sheet stays open this long on the drawing page
