@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { TOAST_MS } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
+import StartScreen from "@/features/start-screen/StartScreen";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -80,26 +81,7 @@ export default function AirDraw() {
       )}
 
       {!started && (
-        <div
-          data-testid="start-screen"
-          className="fixed inset-0 flex flex-col items-center justify-center gap-4 bg-[radial-gradient(ellipse_at_center,#1a1f2b_0%,#000_70%)] p-6 text-center"
-        >
-          <h1 className="text-[26px] font-bold">Air Draw</h1>
-          <ul className="grid max-w-[440px] gap-2 text-left text-[#a9b1c4] [&_b]:text-[#f2f4f8]">
-            <li>☝️ <b>Draw:</b> point your index finger with your thumb and other fingers curled in. Open or relax the hand to lift the pen.</li>
-            <li>🤏🤏 <b>Undo:</b> pinch thumb and index together twice quickly.</li>
-            <li>👋 <b>Clear:</b> flick an open hand quickly across the screen.</li>
-          </ul>
-          <button
-            type="button"
-            onClick={start}
-            disabled={!modelReady || starting}
-            className="cursor-pointer rounded-[10px] bg-[#4fd1c5] px-[22px] py-3 text-base font-semibold text-[#06201d] disabled:cursor-default disabled:opacity-50"
-          >
-            {modelReady ? "Start camera" : "Loading model…"}
-          </button>
-          <div role="status" className="min-h-5 text-[#f6ad55]">{status}</div>
-        </div>
+        <StartScreen modelReady={modelReady} starting={starting} status={status} onStart={start} />
       )}
     </div>
   );

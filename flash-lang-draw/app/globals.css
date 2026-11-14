@@ -24,3 +24,78 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ---------- Langotoon start screen ---------- */
+@theme inline {
+  --font-toon: var(--font-fredoka), ui-rounded, system-ui, sans-serif;
+  --font-hand: var(--font-patrick-hand), "Comic Sans MS", cursive;
+}
+
+/* title: letters pop in one by one, then bob gently */
+.lt-title {
+  text-shadow: 0 0 0 transparent;
+  filter: drop-shadow(4px 5px 0 #1d1b16);
+  -webkit-text-stroke: 3px #1d1b16;
+  paint-order: stroke fill;
+}
+.lt-letter {
+  animation:
+    lt-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    lt-bob 2.8s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 70ms), calc(0.6s + var(--i) * 120ms);
+}
+@keyframes lt-pop {
+  from { transform: translateY(40px) scale(0.3) rotate(-20deg); opacity: 0; }
+  to { transform: translateY(0) scale(1) rotate(var(--tilt)); opacity: 1; }
+}
+@keyframes lt-bob {
+  0%, 100% { transform: translateY(0) rotate(var(--tilt)); }
+  50% { transform: translateY(-8px) rotate(calc(var(--tilt) * -1)); }
+}
+
+/* scribble underline draws itself */
+.lt-scribble {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: lt-draw 0.9s ease-out 0.8s forwards;
+}
+
+/* doodles: strokes draw in, label drops in, then the whole card floats */
+.lt-doodle {
+  transform: translate(-50%, -50%) rotate(var(--rot));
+  animation: lt-float var(--float) ease-in-out calc(var(--delay) + 1.4s) infinite;
+}
+.lt-doodle-svg {
+  filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.45));
+}
+.lt-doodle-svg > * {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: lt-draw 1.2s ease-in-out var(--delay) forwards;
+}
+.lt-doodle-label {
+  opacity: 0;
+  animation: lt-label 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) calc(var(--delay) + 1s) forwards;
+}
+@keyframes lt-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes lt-label {
+  from { opacity: 0; transform: translateY(-8px) scale(0.6); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes lt-float {
+  0%, 100% { transform: translate(-50%, -50%) rotate(var(--rot)); }
+  33% { transform: translate(calc(-50% + 10px), calc(-50% - 14px)) rotate(calc(var(--rot) + 5deg)); }
+  66% { transform: translate(calc(-50% - 8px), calc(-50% + 8px)) rotate(calc(var(--rot) - 4deg)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lt-letter, .lt-doodle { animation: none; }
+  .lt-letter { transform: rotate(var(--tilt)); }
+  .lt-scribble, .lt-doodle-svg > * { animation: none; stroke-dashoffset: 0; }
+  .lt-doodle-label { animation: none; opacity: 1; }
+}
+@media (max-width: 767px) {
+  .lt-doodle { scale: 0.7; }
+}
