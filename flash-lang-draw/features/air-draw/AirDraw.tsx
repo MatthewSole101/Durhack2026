@@ -3,16 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { TOAST_MS } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
+import GestureHints from "./GestureHints";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import { Flag } from "@/features/languages/Flag";
-import { DEFAULT_LANG, type LangCode, languageByCode } from "@/features/languages/languages";
+import { type LangCode, languageByCode } from "@/features/languages/languages";
 import { randomWord, type Word } from "@/features/languages/words";
-import GestureHints from "./GestureHints";
 import StartScreen from "@/features/start-screen/StartScreen";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const cameraError = (e: unknown) =>
   `Camera unavailable: ${message(e)} — open this page via http://localhost or https.`;
+
+type Card = { lang: LangCode; word: Word };
 
 export default function AirDraw() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -21,14 +23,13 @@ export default function AirDraw() {
   const cursorRef = useRef<HandCursorHandle>(null);
 
   const [modelReady, setModelReady] = useState(false);
-  const [started, setStarted] = useState(false);
   const [starting, setStarting] = useState(false);
   const [status, setStatus] = useState(""); // start-screen error line
   const [error, setError] = useState(""); // red banner while drawing
   const [toast, setToast] = useState({ msg: "", show: false });
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [lang, setLang] = useState<LangCode>(DEFAULT_LANG);
-  const [word, setWord] = useState<Word | null>(null); // picked when drawing starts
+  const [lastLang, setLastLang] = useState<LangCode | null>(null);
+  const [card, setCard] = useState<Card | null>(null); // set = on the drawing page
 
   useEffect(() => {
     let alive = true;
@@ -42,7 +43,7 @@ export default function AirDraw() {
         toastTimer = setTimeout(() => setToast(t => ({ ...t, show: false })), TOAST_MS);
       },
       onError: msg => { console.error(msg); setError(msg); },
-      onPointer: p => cursorRef.current?.update(p), // start screen only (engine is in "menu" mode)
+      onPointer: p => cursorRef.current?.update(p),
     });
     engineRef.current = engine;
     engine.load().then(
@@ -62,21 +63,35 @@ export default function AirDraw() {
     };
   }, []);
 
-  async function start() {
+  // Esc → back to the language list
+  useEffect(() => {
+    if (!card) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") back(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [card]);
+
+  async function pick(lang: LangCode) {
     const engine = engineRef.current;
-    if (!engine || started) return;
+    if (!engine || card || starting) return;
+    setLastLang(lang);
     setStarting(true);
     try {
       setStream(await engine.start()); // no-op if the camera is already on; retries if it failed
       setStatus("");
-      setWord(randomWord());
       engine.setMode("draw");
-      setStarted(true); // only once the video is actually playing
+      setCard({ lang, word: randomWord() }); // only once the video is actually playing
     } catch (e) {
       setStatus(cameraError(e));
     } finally {
       setStarting(false);
     }
+  }
+
+  function back() {
+    engineRef.current?.setMode("menu");
+    setCard(null);
+    setError("");
   }
 
   return (
@@ -85,7 +100,7 @@ export default function AirDraw() {
       <video ref={videoRef} playsInline muted className="pointer-events-none fixed left-0 top-0 h-[2px] w-[2px] opacity-0" />
       <canvas ref={canvasRef} className="fixed inset-0 block h-screen w-screen" />
 
-      {/* brief gesture feedback ("↩ Undo", "✨ Cleared") */}
+      {/* brief gesture feedback ("↩ Undo", "✨ Cleared", "🎨 Coral") */}
       <div
         role="status"
         data-testid="toast"
@@ -102,40 +117,48 @@ export default function AirDraw() {
         </div>
       )}
 
-      {started && word && (
+      {card ? (
         <>
+          <button
+            type="button"
+            onClick={back}
+            data-hand-target
+            aria-label="Back to languages"
+            className="font-toon fixed left-4 top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] shadow-[2px_3px_0_rgba(0,0,0,0.45)] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]"
+          >
+            ← Languages
+          </button>
+
           {/* the flashcard prompt: what to draw */}
           <div
             data-testid="word-card"
-            data-lang={lang}
-            data-word={word.id}
+            data-lang={card.lang}
+            data-word={card.word.id}
             className="pointer-events-none fixed left-1/2 top-5 -translate-x-1/2 rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] bg-[#fffdf5] px-7 pb-2 pt-2.5 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)]"
           >
             <div className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
-              <Flag code={lang} width={21} height={14} />
-              Draw this · {languageByCode(lang).name}
+              <Flag code={card.lang} width={21} height={14} />
+              Draw this · {languageByCode(card.lang).name}
             </div>
-            <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">{word[lang]}</div>
-            <div className="font-hand text-lg leading-tight text-[#1d1b16]/55">{word.en}</div>
+            <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">{card.word[card.lang]}</div>
+            <div className="font-hand text-lg leading-tight text-[#1d1b16]/55">{card.word.en}</div>
           </div>
+
           <GestureHints />
         </>
+      ) : (
+        <StartScreen
+          stream={stream}
+          modelReady={modelReady}
+          busy={starting}
+          status={status}
+          lang={lastLang}
+          onPick={pick}
+        />
       )}
 
-      {!started && (
-        <>
-          <StartScreen
-            stream={stream}
-            modelReady={modelReady}
-            starting={starting}
-            status={status}
-            lang={lang}
-            onLangChange={setLang}
-            onStart={start}
-          />
-          <HandCursor ref={cursorRef} />
-        </>
-      )}
+      {/* fingertip cursor: everything on the start screen, just the back button while drawing */}
+      <HandCursor ref={cursorRef} targetsOnly={!!card} />
     </div>
   );
 }

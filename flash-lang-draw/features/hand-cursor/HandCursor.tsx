@@ -40,13 +40,19 @@ function findTarget(x: number, y: number, current: HTMLElement | null): HTMLElem
   return null;
 }
 
-export default function HandCursor({ ref }: { ref?: Ref<HandCursorHandle> }) {
+/**
+ * targetsOnly: show the cursor only while it's over a target (the drawing page, where the
+ * engine draws its own pen cursor and the only target is the back button).
+ */
+export default function HandCursor({ ref, targetsOnly = false }: { ref?: Ref<HandCursorHandle>; targetsOnly?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const arcRef = useRef<SVGCircleElement>(null);
   const paintRef = useRef<SVGRectElement>(null); // flag reveal (clip width)
   const outlineRef = useRef<SVGRectElement>(null); // flag outline, drawn as it fills
   const st = useRef({ target: null as HTMLElement | null, since: 0, fired: false, lastSeen: -1e9 });
   const [flag, setFlag] = useState<LangCode | null>(null);
+  const targetsOnlyRef = useRef(targetsOnly);
+  useEffect(() => { targetsOnlyRef.current = targetsOnly; }, [targetsOnly]);
 
   function setTarget(el: HTMLElement | null) {
     const s = st.current;
@@ -79,7 +85,7 @@ export default function HandCursor({ ref }: { ref?: Ref<HandCursorHandle> }) {
       root.style.transform = `translate(${p.x}px, ${p.y}px)`;
 
       setTarget(findTarget(p.x, p.y, s.target));
-      if (!s.target) { root.dataset.state = "idle"; return; }
+      if (!s.target) { root.dataset.state = targetsOnlyRef.current ? "hidden" : "idle"; return; }
       if (s.fired) return; // pressed already: stays "done" until the finger leaves this target
 
       const progress = Math.min((now - s.since) / DWELL_MS, 1);

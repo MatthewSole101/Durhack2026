@@ -36,3 +36,29 @@ export const POINTER_LOST_MS = 300; // tracking can drop a frame or two without 
 export const DRAW_ARM_MS = 800; // after Start, ignore the pen briefly so the pressing finger doesn't draw
 
 export const HINTS_OPEN_MS = 9000; // gesture cheat-sheet stays open this long on the drawing page
+
+// ✋ colour wheel: hold an open palm still → wheel opens; tilt the hand to choose; fist to pick
+export const PALETTE = [ // left → right on the wheel
+  { name: "Coral", color: "#ff6b6b" },
+  { name: "Orange", color: "#ff9f43" },
+  { name: "Sunshine", color: "#ffd166" },
+  { name: "Lime", color: "#95e06c" },
+  { name: "Teal", color: "#4fd1c5" },
+  { name: "Sky", color: "#5ab0ff" },
+  { name: "Violet", color: "#a78bfa" },
+  { name: "Pink", color: "#f78fb3" },
+] as const;
+export const WHEEL_HOLD_MS = 700; // open palm must be held this still for this long
+export const WHEEL_STILL = 0.025; // max palm drift while holding, as a fraction of frame width
+export const WHEEL_UPRIGHT_DEG = 40; // hand must be roughly upright to open the wheel
+export const WHEEL_SPAN_DEG = 140; // hand tilt range covering the whole palette (±70°)
+export const WHEEL_COOLDOWN_MS = 1200; // after picking, before the wheel can open again
+
+// two-hand shapes: form the symbol, pull hands apart to stretch it, release to place it
+export const SHAPE_ARM_FRAMES = 3; // line / triangle pose must hold this many frames
+export const RECT_HOLD_MS = 500; // both-hands L pose must hold this long (it's close to the triangle pose)
+export const TOUCH = 0.45; // fingertips "touching" = closer than this × palm size
+export const RECT_MIN_GAP = 1.2; // L-pose fingertips must be at least this × palm apart
+export const SQUARE_SNAP = 0.15; // rectangles within 15% of square snap to a square
+export const SHAPE_MIN_PX = 24; // shapes smaller than this (video px) are dropped
+export const SHAPE_COOLDOWN_MS = 500; // after placing a shape, before another can start

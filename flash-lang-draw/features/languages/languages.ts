@@ -14,6 +14,4 @@ export const LANGUAGES = [
 export type Language = (typeof LANGUAGES)[number];
 export type LangCode = Language["code"];
 
-export const DEFAULT_LANG: LangCode = "es";
-
 export const languageByCode = (code: LangCode): Language => LANGUAGES.find(l => l.code === code)!;
