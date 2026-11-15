@@ -110,5 +110,6 @@ export const SHAPE_COOLDOWN_MS = 500; // after placing a shape, before another c
 export const ACTION_COOLDOWN_MS = 600; // after a shape or a colour pick: no undo / redo / clear / wheel
 
 export const SOLVED_MS = 1600; // how long a solved word stays up before the next one
+export const REVEAL_MS = 3000; // how long a skipped word's English and doodle stay up before the next one
 
 export const PREDICT_CONFIDENCE_THRESH = 0.75; // How confident a prediction has to be to be counted as correct

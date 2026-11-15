@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
+import { REVEAL_MS, SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import type { MicState } from "./snap-audio";
 import { createDeck, isCorrect } from "@/features/game/deck";
 import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { loadDoodles, SkipDoodle } from "@/features/game/SkipDoodle";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
 import { wordForLabel, type Word } from "@/features/languages/words";
@@ -54,6 +55,8 @@ type TestWindow = Window & {
 type Game = {
   /** Clear the canvas and deal the next word. */
   nextRound: () => Word;
+  /** Give up on the word: show what it means in English for a moment, then deal the next one. */
+  skip: () => void;
   /** Back to the language list. */
   leave: () => void;
 };
@@ -75,6 +78,7 @@ export default function AirDraw() {
   const [card, setCard] = useState<Card | null>(null); // set = on the drawing page
 
   const [solved, setSolved] = useState(false);
+  const [revealed, setRevealed] = useState(false); // skipped: the card shows the English
   const [classifier, setClassifier] = useState<ClassifierStatus>({ state: "runtime" });
   const [prediction, setPrediction] = useState(NO_PREDICTION);
   const [debug, setDebug] = useState(false);
@@ -89,6 +93,7 @@ export default function AirDraw() {
     let model: QuickDrawModel | null = null;
     let predictor: Predictor | null = null;
     let current: Word | null = null, won = false; // the word on screen, while on the drawing page
+    let skipped = false; // the word was given up on: its English is showing, it can't be won any more
 
     const testWindow = TEST_BUILD ? (window as TestWindow) : null;
     const deck = testWindow?.__gameDeck;
@@ -119,15 +124,17 @@ export default function AirDraw() {
       e => { if (alive) setStatus(cameraError(e)); },
     );
 
+    loadDoodles().catch(e => console.error(e)); // ready before the first skip; a skip still works without them
+
     // ---------------- rounds ----------------
     function nextRound() {
       clearTimeout(solvedTimer);
       engine.reset();
       predictor?.reset(); // a guess for the old drawing must not count for the new word
       const word = current = deal();
-      won = false;
+      won = false; skipped = false;
       setCard(c => c && { ...c, word });
-      setSolved(false); setPrediction(NO_PREDICTION);
+      setSolved(false); setRevealed(false); setPrediction(NO_PREDICTION);
       if (hook) { hook.prediction = NO_PREDICTION; hook.rounds.push(word.id); }
       return word;
     }
@@ -136,18 +143,29 @@ export default function AirDraw() {
       clearTimeout(solvedTimer);
       engine.setMode("menu");
       predictor?.reset();
-      current = null; won = false;
+      current = null; won = false; skipped = false;
       setCard(null); setError("");
-      setSolved(false); setPrediction(NO_PREDICTION);
+      setSolved(false); setRevealed(false); setPrediction(NO_PREDICTION);
       if (hook) hook.prediction = NO_PREDICTION;
     }
-    gameRef.current = { nextRound, leave };
+
+    // Skipping shows the answer first (its English, and a doodle of it): the learner skipped
+    // because they don't know the word.
+    // A second skip (or one on a solved word) moves on straight away.
+    function skip() {
+      if (!current) return;
+      if (won || skipped) { nextRound(); return; }
+      skipped = true;
+      setRevealed(true);
+      solvedTimer = setTimeout(nextRound, REVEAL_MS);
+    }
+    gameRef.current = { nextRound, skip, leave };
 
     function onPrediction(p: Prediction) {
       if (!current) return; // back on the language list
       setPrediction(p);
       if (hook) hook.prediction = p;
-      if (!won && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
+      if (!won && !skipped && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
         correctSound.currentTime = 0;
@@ -208,7 +226,7 @@ export default function AirDraw() {
       const k = e.key.toLowerCase();
       if (k === "escape") leave(); // Esc → back to the language list
       if (k === "d") setDebug(d => !d);
-      if (k === "n") nextRound();
+      if (k === "n") skip();
     }
     window.addEventListener("keydown", onKey);
 
@@ -279,16 +297,18 @@ export default function AirDraw() {
           {!solved && (
             <button
               type="button"
-              onClick={() => gameRef.current?.nextRound()}
+              onClick={() => gameRef.current?.skip()}
               data-hand-target
               className={`${TOP_BUTTON} right-4`}
             >
-              Skip →
+              {revealed ? "Next →" : "Skip →"}
             </button>
           )}
 
           {/* the flashcard prompt: what to draw */}
-          <WordCard word={card.word} lang={card.lang} solved={solved} />
+          <WordCard word={card.word} lang={card.lang} solved={solved} revealed={revealed} />
+          {/* skipped: a Quick Draw doodle of the word, in the middle of the screen */}
+          {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
 
           <GestureHints mic={mic} />
           {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup) */}
