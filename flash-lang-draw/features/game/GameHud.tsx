@@ -9,7 +9,7 @@ import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
 import { Flag } from "@/features/languages/Flag";
 import { type LangCode, languageByCode } from "@/features/languages/languages";
-import type { Word } from "@/features/languages/words";
+import { wordForLabel, type Word } from "@/features/languages/words";
 
 export type ClassifierStatus =
   | { state: "runtime" | "compiling" }
@@ -50,6 +50,69 @@ export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: Lan
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Live feed of the classifier's top guesses, translated into the language being learnt.
+ * Translation happens here, at render time, from the raw predicted labels — switching
+ * language re-renders the feed without re-running inference. Labels with no dictionary
+ * entry fall back to the raw (English) label.
+ */
+export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; lang: LangCode }) {
+  return (
+    <aside
+      data-testid="guess-feed"
+      data-lang={lang}
+      className="fixed bottom-5 left-4 w-60 rounded-xl border border-white/15 bg-[#0f1115]/75 p-3 backdrop-blur-md"
+    >
+      <p className="font-hand mb-2 flex items-center gap-1.5 text-sm text-white/60">
+        <Flag code={lang} width={18} height={12} />
+        You drew… · {languageByCode(lang).name}
+      </p>
+      {guesses.length === 0 ? (
+        <p data-testid="guess-feed-empty" className="font-hand text-base text-white/45">
+          Draw something…
+        </p>
+      ) : (
+        <ol className="flex flex-col gap-1">
+          {guesses.map((g, i) => {
+            const word = wordForLabel(g.label);
+            const translated = word ? word[lang] : g.label;
+            const english = word ? word.en : g.label;
+            return (
+              <li
+                key={g.label}
+                data-testid="guess-feed-item"
+                data-rank={i + 1}
+                data-label={g.label}
+                className={
+                  i === 0
+                    ? "-mx-1 rounded-lg bg-[#4fd1c5]/15 px-2 py-1"
+                    : "px-2 py-0.5"
+                }
+              >
+                <span
+                  lang={lang}
+                  // title={english !== translated ? english : undefined}
+                  className={
+                    i === 0
+                      ? "font-toon block text-lg leading-tight font-semibold text-[#4fd1c5]"
+                      : "font-hand block truncate text-base leading-tight text-white/75"
+                  }
+                >
+                  {i === 0 ? "★ " : `${i + 1}. `}
+                  {translated}
+                </span>
+                {/* {i === 0 && english !== translated && (
+                  <span className="font-hand block text-xs text-white/45">{english}</span>
+                )} */}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </aside>
   );
 }
 

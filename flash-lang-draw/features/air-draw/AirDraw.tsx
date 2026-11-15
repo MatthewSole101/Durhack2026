@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SOLVED_MS, TOAST_MS } from "./constants";
+import { SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import { createDeck, isCorrect } from "@/features/game/deck";
-import { DebugPanel, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
 import type { Word } from "@/features/languages/words";
@@ -135,7 +135,7 @@ export default function AirDraw() {
       if (!current) return; // back on the language list
       setPrediction(p);
       if (hook) hook.prediction = p;
-      if (!won && isCorrect(current, p.guesses[0]?.label)) {
+      if (!won && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
         solvedTimer = setTimeout(nextRound, SOLVED_MS);
@@ -264,6 +264,8 @@ export default function AirDraw() {
           <WordCard word={card.word} lang={card.lang} solved={solved} onSkip={() => gameRef.current?.nextRound()} />
 
           <GestureHints />
+          {/* live top guesses, translated into the language being learnt (render-time lookup) */}
+          <GuessFeed guesses={prediction.guesses} lang={card.lang} />
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
         </>
       ) : (
