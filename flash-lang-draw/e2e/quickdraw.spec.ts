@@ -342,12 +342,16 @@ test.describe("game", () => {
     await expect(page.getByTestId("word")).toHaveText("line");
     await expect(card).toHaveAttribute("data-solved", "false");
     await expect(card).toHaveAttribute("data-lang", "es");
-    await expect(card).toHaveText("line"); // just the word: no English, no "Draw this" line
+    // the language being learnt, then the word in it. Never the English.
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Draw this");
+    await expect(card).toHaveText("Español · Draw thisline");
+    await expect(page.getByTestId("word-card-heading").locator("svg")).toBeVisible(); // the flag
 
     await play(page, "pinchDraw"); // a straight horizontal stroke
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label)).toBe("line");
     await expect(card).toHaveAttribute("data-solved", "true");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Correct!");
     await expect(page.getByRole("button", { name: /Skip/ })).toHaveCount(0); // nothing to skip once solved
 
     // next round: new word, clean canvas, guesses reset
@@ -408,6 +412,7 @@ test.describe("game", () => {
     // picking again deals the next word on a clean canvas, in the new language
     await langButton(page, /Polski/).click();
     await expect(card).toHaveAttribute("data-lang", "pl");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Polski · Draw this");
     await expect(page.getByTestId("word")).toHaveText("cat");
     await expect(card).toHaveAttribute("data-solved", "false");
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
