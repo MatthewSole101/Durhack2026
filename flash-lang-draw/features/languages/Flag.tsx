@@ -10,18 +10,12 @@ export function FlagArt({ code }: { code: LangCode }) {
   switch (code) {
     case "es":
       return <><rect width="30" height="20" fill="#c60b1e" /><rect y="5" width="30" height="10" fill="#ffc400" /></>;
-    case "fr":
-      return <><rect width="10" height="20" fill="#0055a4" /><rect x="10" width="10" height="20" fill="#fff" /><rect x="20" width="10" height="20" fill="#ef4135" /></>;
-    case "de":
-      return <><rect width="30" height={H3} fill="#000" /><rect y={H3} width="30" height={H3} fill="#dd0000" /><rect y={2 * H3} width="30" height={H3} fill="#ffce00" /></>;
-    case "it":
-      return <><rect width="10" height="20" fill="#009246" /><rect x="10" width="10" height="20" fill="#fff" /><rect x="20" width="10" height="20" fill="#ce2b37" /></>;
-    case "pt":
-      return <>
-        <rect width="30" height="20" fill="#ff0000" /><rect width="12" height="20" fill="#006600" />
-        <circle cx="12" cy="10" r="4.2" fill="none" stroke="#ffcc00" strokeWidth="1.4" />
-        <path d="M10.4 7.8h3.2v3.4a1.6 1.6 0 0 1-3.2 0z" fill="#fff" stroke="#ff0000" strokeWidth="0.6" />
-      </>;
+    case "ru":
+      return <><rect width="30" height={H3} fill="#fff" /><rect y={H3} width="30" height={H3} fill="#0039a6" /><rect y={2 * H3} width="30" height={H3} fill="#d52b1e" /></>;
+    case "pl":
+      return <><rect width="30" height="10" fill="#fff" /><rect y="10" width="30" height="10" fill="#dc143c" /></>;
+    case "id":
+      return <><rect width="30" height="10" fill="#ce1126" /><rect y="10" width="30" height="10" fill="#fff" /></>;
     case "ja":
       return <><rect width="30" height="20" fill="#fff" /><circle cx="15" cy="10" r="6" fill="#bc002d" /></>;
     case "ko":

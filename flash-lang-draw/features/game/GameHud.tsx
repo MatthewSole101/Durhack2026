@@ -7,8 +7,8 @@ import { useEffect, useRef } from "react";
 import { INPUT_SIZE } from "@/features/quickdraw/constants";
 import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
-import { Flag } from "@/features/languages/Flag";
-import { type LangCode, languageByCode } from "@/features/languages/languages";
+import type { LangCode } from "@/features/languages/languages";
+import { labelIn } from "@/features/languages/label-words";
 import { wordForLabel, type Word } from "@/features/languages/words";
 
 export type ClassifierStatus =
@@ -16,8 +16,8 @@ export type ClassifierStatus =
   | { state: "ready"; name: string; inputShape: number[]; dtype: string; labelSource: LabelSource }
   | { state: "error"; message: string };
 
-/** The flashcard prompt: what to draw, in the language being learnt. */
-export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: LangCode; solved: boolean; onSkip: () => void }) {
+/** The flashcard prompt: what to draw, in the language being learnt (and only in that language). */
+export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; solved: boolean }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
       <div
@@ -26,38 +26,23 @@ export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: Lan
         data-word={word.id}
         data-solved={solved}
         role="status"
-        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2 pt-2.5 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
+        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 py-2.5 text-center text-[#1d1b16] transition-colors duration-200 ${
           solved ? "bg-[#b9efb0]" : "bg-[#fffdf5]"
         }`}
       >
-        <div className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
-          <Flag code={lang} width={21} height={14} />
-          {solved ? "Correct!" : "Draw this"} · {languageByCode(lang).name}
-        </div>
         <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
           {solved && <span aria-hidden>✓ </span>}
-          <span lang={lang} data-testid="word">{word[lang]}</span>
+          <span lang={lang} data-testid="word">{word.text[lang]}</span>
         </div>
-        <div className="font-hand text-lg leading-tight text-[#1d1b16]/55">{word.en}</div>
       </div>
-      {!solved && (
-        <button
-          type="button"
-          onClick={onSkip}
-          className="font-hand pointer-events-auto cursor-pointer rounded-full bg-[#0f1115]/45 px-3 py-0.5 text-base text-white/85 backdrop-blur-sm transition hover:bg-[#0f1115]/70 hover:text-white"
-        >
-          skip ›
-        </button>
-      )}
     </div>
   );
 }
 
 /**
- * Live feed of the classifier's top guesses, translated into the language being learnt.
- * Translation happens here, at render time, from the raw predicted labels — switching
- * language re-renders the feed without re-running inference. Labels with no dictionary
- * entry fall back to the raw (English) label.
+ * Live feed of the classifier's top guesses, in the language being learnt (every Quick Draw
+ * class has an entry in label-words.ts). Translation happens here, at render time, from the raw
+ * predicted labels, so switching language re-renders the feed without re-running inference.
  */
 export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; lang: LangCode }) {
   return (
@@ -66,10 +51,7 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
       data-lang={lang}
       className="fixed bottom-5 left-4 w-60 rounded-xl border border-white/15 bg-[#0f1115]/75 p-3 backdrop-blur-md"
     >
-      <p className="font-hand mb-2 flex items-center gap-1.5 text-sm text-white/60">
-        <Flag code={lang} width={18} height={12} />
-        You drew… · {languageByCode(lang).name}
-      </p>
+      <h2 className="font-toon mb-2 text-center text-xl font-semibold text-white/90">You drew…</h2>
       {guesses.length === 0 ? (
         <p data-testid="guess-feed-empty" className="font-hand text-base text-white/45">
           Draw something…
@@ -77,9 +59,7 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
       ) : (
         <ol className="flex flex-col gap-1">
           {guesses.map((g, i) => {
-            const word = wordForLabel(g.label);
-            const translated = word ? word[lang] : g.label;
-            const english = word ? word.en : g.label;
+            const translated = labelIn(g.label, lang) ?? wordForLabel(g.label)?.text[lang] ?? g.label;
             return (
               <li
                 key={g.label}
@@ -94,7 +74,6 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
               >
                 <span
                   lang={lang}
-                  // title={english !== translated ? english : undefined}
                   className={
                     i === 0
                       ? "font-toon block text-lg leading-tight font-semibold text-[#4fd1c5]"
@@ -104,9 +83,6 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
                   {i === 0 ? "★ " : `${i + 1}. `}
                   {translated}
                 </span>
-                {/* {i === 0 && english !== translated && (
-                  <span className="font-hand block text-xs text-white/45">{english}</span>
-                )} */}
               </li>
             );
           })}

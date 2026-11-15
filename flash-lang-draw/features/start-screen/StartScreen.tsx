@@ -112,10 +112,10 @@ export default function StartScreen({ stream, modelReady, busy, status, lang, on
                   disabled={!modelReady || busy}
                   onClick={() => onPick(l.code)}
                   style={{ rotate: `${i % 2 ? 1.5 : -1.5}deg` }}
-                  className={`font-toon inline-flex cursor-pointer items-center gap-2 rounded-xl border-[3px] border-[#1d1b16] px-3.5 py-2 text-lg font-semibold text-[#1d1b16] transition-[translate,background-color,box-shadow,opacity] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] disabled:cursor-default disabled:opacity-55 disabled:hover:translate-y-0 data-[hand-hover]:-translate-y-1 data-[hand-hover]:bg-[#fff3c4] ${
+                  className={`font-toon inline-flex cursor-pointer items-center gap-2 rounded-xl border-[3px] border-[#1d1b16] px-3.5 py-2 text-base font-semibold text-[#1d1b16] transition-[translate,background-color,box-shadow,opacity] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] disabled:cursor-default disabled:opacity-55 disabled:hover:translate-y-0 data-[hand-hover]:-translate-y-1 data-[hand-hover]:bg-[#fff3c4] ${
                     last
-                      ? "bg-[#ffd166] shadow-[4px_5px_0_#1d1b16]"
-                      : "bg-[#fffdf5]/90 shadow-[2px_3px_0_rgba(0,0,0,0.45)]"
+                      ? "bg-[#ffd166]"
+                      : "bg-[#fffdf5]/90"
                   }`}
                 >
                   <Flag code={l.code} width={24} height={16} />

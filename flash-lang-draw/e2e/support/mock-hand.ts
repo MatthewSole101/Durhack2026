@@ -17,12 +17,15 @@ declare global {
       wheel: number | null;
       shape: ShapeKind | null;
       hands: [number, number]; // [live, remembered]
+      mic: "on" | "starting" | "click" | "off";
+      setMic: (s: "on" | "starting" | "click" | "off") => void;
+      snapSound: () => void;
     };
     __gameDeck: Word[];
     __quickDraw: QuickDrawTestHook;
     __airDrawMock: unknown;
     __play: (scene: string) => void;
-    __hover: (nx: number, ny: number, ms: number) => void;
+    __hover: (nx: number, ny: number, ms: number, pinch?: boolean) => void;
     __sceneDone: boolean;
     __detectCalls: number;
   }
@@ -71,6 +74,8 @@ export function installMock() {
   const POINT: HandSpec["ext"] = [true, false, false, false];
   const OPEN: HandSpec["ext"] = [true, true, true, true];
   const FIST: HandSpec["ext"] = [false, false, false, false];
+  // 🫰 ready to snap: thumb tip pressed on the middle fingertip, middle finger out
+  const SNAP_READY: HandSpec = { ext: [false, true, false, false], thumb: [0, -190, 0] };
   // a fist with the thumb straight out to the side; a right hand's thumb points right on screen
   const THUMB_SIDE: Thumb = [-150, -55, 0];
 
@@ -89,23 +94,44 @@ export function installMock() {
     },
     // two hands drawing: the second starts pinching well after the first, so it's not a line
     twoPinchDraw: e => {
-      if (e > 900) return null;
-      const a: HandSpec = { ext: POINT, thumb: "pinch", at: [0.25 + 0.1 * (e / 900), 0.7] };
-      const b: HandSpec = { ext: POINT, thumb: e >= 450 ? "pinch" : "tucked", at: [0.7 + 0.08 * (e / 900), 0.7], mirror: true };
+      if (e > 1100) return null; // B starts pinching 650 ms after A: well outside the 350 ms "together → line" window
+      const a: HandSpec = { ext: POINT, thumb: "pinch", at: [0.25 + 0.1 * (e / 1100), 0.7] };
+      const b: HandSpec = { ext: POINT, thumb: e >= 650 ? "pinch" : "tucked", at: [0.7 + 0.08 * (e / 1100), 0.7], mirror: true };
       return [a, b];
     },
     // 👈 / 👉 (as seen on screen; the mirrored hand is a left hand)
     thumbLeft: e => (e > 600 ? null : [{ ext: FIST, thumb: THUMB_SIDE, mirror: true }]),
     thumbRight: e => (e > 600 ? null : [{ ext: FIST, thumb: THUMB_SIDE }]),
-    // open hand: still for 200 ms, then flicked 0.2 frame widths in 80 ms — to the user's left
-    // (+x in the camera image is left on the mirrored screen), to the right, or a slow swipe left
-    flick: e => (e > 450 ? null : [{ ext: OPEN, thumb: "out", dx: 0.2 * ramp(e, 200, 80) }]),
-    flickRight: e => (e > 450 ? null : [{ ext: OPEN, thumb: "out", dx: 0.3 - 0.2 * ramp(e, 200, 80) }]),
-    swipeLeftSlow: e => (e > 900 ? null : [{ ext: OPEN, thumb: "out", dx: 0.3 * ramp(e, 200, 600) }]),
-    // ✋ still (wheel opens at 700 ms) → tilt 60° to the user's left → hold → ✊ pick
-    wheel: e => (e > 1700 ? null : [e < 1400
-      ? { ext: OPEN, thumb: "out", rot: 60 * ramp(e, 900, 300) }
+    // draw a stroke, then close the hand with the thumb sticking out sideways (not meant as 👉)
+    drawThenThumb: e => (e > 1200 ? null : [e < 500 ? { ext: POINT, thumb: "pinch", dx: 0.1 * (e / 500) } : { ext: FIST, thumb: THUMB_SIDE, dx: 0.1 }]),
+    // 🫰 thumb pressed on the middle fingertip for 400 ms, then snapped: the middle finger drops
+    // into the palm and the thumb slides off towards the index
+    snap: e => (e > 700 ? null : [e < 400 ? SNAP_READY : { ext: FIST, thumb: [-60, -130, 0] }]),
+    // set up for a snap, then gone (motion blur) for the snap itself, back a moment later
+    snapBlurred: e => (e > 800 ? null : e < 400 ? [SNAP_READY] : e < 520 ? [] : [{ ext: FIST, thumb: [-60, -130, 0] }]),
+    // a fist (tucked thumb resting on the curled middle finger) opening: not a snap
+    fistOpen: e => (e > 700 ? null : [e < 400 ? { ext: FIST, thumb: "tucked" } : { ext: OPEN, thumb: "out" }]),
+    // 🤏 pinched for 400 ms, then the fingers open ~1.5 cm (gap ≈ 0.5 palm) while the hand keeps moving
+    pinchThenOpen: e => (e > 900 ? null : [{ ext: POINT, thumb: e < 400 ? "pinch" : [-80, -170, 0], dx: 0.2 * (e / 900) }]),
+    // 🤏 pinched with the pad of the index finger: thumb beside its last segment, not on the tip
+    pinchPad: e => (e > 700 ? null : [{ ext: POINT, thumb: [-52, -172, 0], dx: 0.1 * (e / 700) }]),
+    // ✋ moving the hand around without meaning to draw:
+    // the thumb brushes the index fingertip for 100 ms on the way…
+    pinchBrush: e => (e > 700 ? null : [{ ext: POINT, thumb: e >= 300 && e < 400 ? "pinch" : "out", dx: 0.15 * (e / 700) }]),
+    // …a fast sweep with the fingertips together (motion blur)…
+    pinchFast: e => (e > 300 ? null : [{ ext: POINT, thumb: "pinch", dx: 0.45 * (e / 300) }]),
+    // …a relaxed hand, thumb resting against the side of the index finger
+    thumbSide: e => (e > 700 ? null : [{ ext: POINT, thumb: [-45, -135, 0], dx: 0.1 * (e / 700) }]),
+    // ✋ still (wheel opens at 1 s) → tilt 60° to the user's left → hold → ✊ pick
+    wheel: e => (e > 2000 ? null : [e < 1700
+      ? { ext: OPEN, thumb: "out", rot: 60 * ramp(e, 1200, 300) }
       : { ext: FIST, thumb: "tucked", rot: 60 }]),
+    // one hand pinches and waits, the other pinches 0.7 s later, both still → pull apart → let go
+    lineStaggered: e => {
+      if (e > 1700) return null;
+      const s = 0.15 * ramp(e, 1000, 300), thumbA: Thumb = e < 1400 ? "pinch" : "out", thumbB: Thumb = e >= 700 && e < 1400 ? "pinch" : "tucked";
+      return [{ ext: POINT, thumb: thumbA, at: [0.4 - s, 0.75] }, { ext: POINT, thumb: thumbB, at: [0.6 + s, 0.72], mirror: true }];
+    },
     // both hands pinch at once → pull apart → let go
     line: e => {
       if (e > 1100) return null;
@@ -134,8 +160,8 @@ export function installMock() {
   window.__sceneDone = true;
   window.__detectCalls = 0;
   window.__play = name => { scene = scenes[name]; t0 = performance.now(); window.__sceneDone = false; };
-  window.__hover = (nx, ny, ms) => {
-    scene = e => (e > ms ? null : [{ ext: POINT, thumb: "tucked", tipAt: [nx, ny] }]);
+  window.__hover = (nx, ny, ms, pinch = false) => {
+    scene = e => (e > ms ? null : [{ ext: POINT, thumb: pinch ? "pinch" : "tucked", tipAt: [nx, ny] }]);
     t0 = performance.now(); window.__sceneDone = false;
   };
 
@@ -164,8 +190,11 @@ export function installMock() {
  * forgotten: every scene starts from a clean slate. Pass { forget: false } to look at the
  * remembered state instead.
  */
-export async function play(page: Page, scene: string, { forget = true } = {}) {
-  await page.evaluate(s => window.__play(s), scene);
+export async function play(page: Page, scene: string, { forget = true, soundAt }: { forget?: boolean; soundAt?: number } = {}) {
+  await page.evaluate(([s, ms]) => {
+    window.__play(s as string);
+    if (ms !== undefined) setTimeout(() => window.__airDraw.snapSound(), ms as number); // 🫰 heard at this point in the scene
+  }, [scene, soundAt] as const);
   await page.waitForFunction(() => window.__sceneDone);
   // let one more empty frame through
   const n = await page.evaluate(() => window.__detectCalls);
@@ -175,18 +204,18 @@ export async function play(page: Page, scene: string, { forget = true } = {}) {
 export const forgotten = (page: Page) =>
   page.waitForFunction(() => window.__airDraw.hands[0] + window.__airDraw.hands[1] === 0);
 // hold a pointing fingertip over the centre of an element for `ms` (scene runs in the page)
-export async function hoverHand(page: Page, target: Locator, ms: number) {
+export async function hoverHand(page: Page, target: Locator, ms: number, { pinch = false } = {}) {
   const box = (await target.boundingBox())!;
-  await page.evaluate(([x, y, ms]) => {
-    const [nx, ny] = window.__airDraw.screenToVideo(x, y);
-    window.__hover(nx, ny, ms);
-  }, [box.x + box.width / 2, box.y + box.height / 2, ms]);
+  await page.evaluate(([x, y, ms, pinch]) => {
+    const [nx, ny] = window.__airDraw.screenToVideo(x as number, y as number);
+    window.__hover(nx, ny, ms as number, pinch as boolean);
+  }, [box.x + box.width / 2, box.y + box.height / 2, ms, pinch] as const);
 }
 export const langButton = (page: Page, name: RegExp) => page.getByRole("button", { name });
 
 /** A flashcard for tests: the same text in every language, won by the given Quick Draw classes. */
 export function testWord(id: string, ...labels: string[]): Word {
-  return { id, en: id, labels, es: id, fr: id, de: id, it: id, pt: id, ja: id, ko: id };
+  return { id, en: id, labels, text: { es: id, ru: id, pl: id, id, ja: id, ko: id } };
 }
 
 export function trackErrors(page: Page) {

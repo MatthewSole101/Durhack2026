@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS } from "../features/air-draw/constants";
 import { createDeck, isCorrect } from "../features/game/deck";
+import { LABEL_WORD_KEYS, labelIn } from "../features/languages/label-words";
+import { LANGUAGES } from "../features/languages/languages";
 import { WORDS, wordForLabel, type Word } from "../features/languages/words";
 import { fixBatchSize } from "../features/quickdraw/flatbuffer";
 import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
@@ -133,12 +135,19 @@ test.describe("labels and scoring", () => {
       for (const label of w.labels) expect(BUILTIN_LABELS, `${w.id} → ${label}`).toContain(label);
     }
     const apple = WORDS.find(w => w.id === "apple")!, boat = WORDS.find(w => w.id === "boat")!;
-    expect(apple.es).toBe("la manzana");
+    expect(apple.text.es).toBe("la manzana");
     expect(isCorrect(apple, "apple")).toBe(true);
     expect(isCorrect(apple, "pear")).toBe(false);
     expect(isCorrect(apple, undefined)).toBe(false); // nothing drawn
     expect(isCorrect(boat, "sailboat")).toBe(true); // "boat" is not a class: any kind of boat counts
     expect(isCorrect(boat, "canoe")).toBe(true);
+  });
+
+  test("every class has a translation in every language, matching the flashcards", () => {
+    expect([...LABEL_WORD_KEYS].sort()).toEqual([...BUILTIN_LABELS].sort());
+    for (const label of BUILTIN_LABELS) for (const { code } of LANGUAGES) expect(labelIn(label, code), `${label} / ${code}`).toBeTruthy();
+    // a flashcard whose class is its own word reads the same in the guess feed as on the card
+    for (const w of WORDS) if (w.labels.includes(w.id)) for (const { code } of LANGUAGES) expect(labelIn(w.id, code), `${w.id} / ${code}`).toBe(w.text[code]);
   });
 
   test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
@@ -147,8 +156,8 @@ test.describe("labels and scoring", () => {
     // a multi-class word: any of its labels gives the same base word + translations
     const boat = wordForLabel("sailboat")!;
     expect(boat.en).toBe("boat");
-    expect(boat.es).toBe("el barco");
-    expect(boat.ja).toBe("ふね");
+    expect(boat.text.es).toBe("el barco");
+    expect(boat.text.ja).toBe("ふね");
     // labels the dictionary doesn't cover fall back to undefined (the feed shows the raw label)
     expect(wordForLabel("line")).toBeUndefined();
     expect(wordForLabel("The Eiffel Tower")).toBeUndefined();
@@ -306,13 +315,14 @@ test.describe("game", () => {
 
     await expect(page.getByTestId("word")).toHaveText("line");
     await expect(card).toHaveAttribute("data-solved", "false");
-    await expect(card).toContainText("Draw this · Español");
+    await expect(card).toHaveAttribute("data-lang", "es");
+    await expect(card).toHaveText("line"); // just the word: no English, no "Draw this" line
 
     await play(page, "pinchDraw"); // a straight horizontal stroke
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label)).toBe("line");
     await expect(card).toHaveAttribute("data-solved", "true");
-    await expect(card).toContainText("Correct!");
+    await expect(page.getByRole("button", { name: /Skip/ })).toHaveCount(0); // nothing to skip once solved
 
     // next round: new word, clean canvas, guesses reset
     await expect(page.getByTestId("word")).toHaveText("zebra", { timeout: 5_000 });
@@ -346,7 +356,7 @@ test.describe("game", () => {
     await expect(guesses).toHaveCount(5);
 
     await expect(page.getByTestId("word")).toHaveText("cat");
-    await page.getByRole("button", { name: "skip ›" }).click();
+    await page.getByRole("button", { name: /Skip/ }).click();
     await expect(page.getByTestId("word")).toHaveText("zebra");
     await expect(guesses).toHaveText(["Draw something…"]);
 
@@ -370,9 +380,8 @@ test.describe("game", () => {
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses)).toEqual([]);
 
     // picking again deals the next word on a clean canvas, in the new language
-    await langButton(page, /Deutsch/).click();
-    await expect(card).toHaveAttribute("data-lang", "de");
-    await expect(card).toContainText("Draw this · Deutsch");
+    await langButton(page, /Polski/).click();
+    await expect(card).toHaveAttribute("data-lang", "pl");
     await expect(page.getByTestId("word")).toHaveText("cat");
     await expect(card).toHaveAttribute("data-solved", "false");
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
@@ -396,8 +405,9 @@ test.describe("game", () => {
     const top = items.first();
     await expect(top).toHaveAttribute("data-rank", "1");
     await expect(top).toHaveAttribute("data-label", topLabel); // wired to real inference
-    // "line" has no dictionary entry, so the raw label is shown (the fallback path)
-    await expect(top).toContainText(topLabel);
+    // shown in Spanish, not as the English class name
+    await expect(top).toContainText(labelIn(topLabel, "es")!);
+    await expect(top).not.toContainText(topLabel);
 
     // clear the canvas → back to the empty placeholder (no inference on an empty board)
     await page.keyboard.press("c");

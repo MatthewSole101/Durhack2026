@@ -35,7 +35,7 @@ export const DOODLES: Doodle[] = [
     </>,
   },
   {
-    id: "cat", word: "le chat", lang: "FR", color: "#f78fb3",
+    id: "cat", word: "кошка", lang: "RU", color: "#f78fb3",
     left: 80, top: 9, size: 112, rotate: 7, delay: 0.35, float: 8,
     paths: <>
       {P("M22 40 L26 14 L42 30 Q50 27 58 30 L74 14 L78 40 Q84 72 50 80 Q16 72 22 40 Z")}
@@ -45,7 +45,7 @@ export const DOODLES: Doodle[] = [
     </>,
   },
   {
-    id: "house", word: "das Haus", lang: "DE", color: "#7bdff2",
+    id: "house", word: "dom", lang: "PL", color: "#7bdff2",
     left: 5, top: 62, size: 110, rotate: 5, delay: 0.6, float: 9,
     paths: <>
       {P("M18 48 L50 18 L82 48")}
@@ -56,7 +56,7 @@ export const DOODLES: Doodle[] = [
     </>,
   },
   {
-    id: "apple", word: "la mela", lang: "IT", color: "#ff6b6b",
+    id: "apple", word: "jabłko", lang: "PL", color: "#ff6b6b",
     left: 84, top: 60, size: 96, rotate: -6, delay: 0.85, float: 7.5,
     paths: <>
       {P("M50 32 Q34 20 22 36 Q12 58 30 78 Q40 88 50 80 Q60 88 70 78 Q88 58 78 36 Q66 20 50 32 Z")}
@@ -82,7 +82,7 @@ export const DOODLES: Doodle[] = [
     </>,
   },
   {
-    id: "tree", word: "o árvore", lang: "PT", color: "#95e06c",
+    id: "tree", word: "pohon", lang: "ID", color: "#95e06c",
     left: 22, top: 18, size: 86, rotate: 6, delay: 1.5, float: 9.5, wideOnly: true,
     paths: <>
       {P("M50 90 L50 58 M44 90 L56 90")}

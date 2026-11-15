@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
+import type { MicState } from "./snap-audio";
 import { createDeck, isCorrect } from "@/features/game/deck";
 import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
@@ -22,6 +23,11 @@ const cameraError = (e: unknown) =>
 const NO_PREDICTION: Prediction = { guesses: [], input: null };
 
 type Card = { lang: LangCode; word: Word };
+
+// the buttons in the top corners of the drawing page; data-hand-target makes them pressable by
+// holding a fingertip over them (see HandCursor)
+const TOP_BUTTON =
+  "font-toon fixed top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]";
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): the round can be chosen and the classifier driven directly.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
@@ -70,6 +76,7 @@ export default function AirDraw() {
   const [classifier, setClassifier] = useState<ClassifierStatus>({ state: "runtime" });
   const [prediction, setPrediction] = useState(NO_PREDICTION);
   const [debug, setDebug] = useState(false);
+  const [mic, setMic] = useState<MicState>("off"); // microphone for hearing finger snaps
 
   useEffect(() => {
     let alive = true;
@@ -95,6 +102,7 @@ export default function AirDraw() {
       onError: msg => { console.error(msg); setError(msg); },
       onPointer: p => cursorRef.current?.update(p),
       onStrokes: state => (state === "drawing" ? predictor?.drawing() : predictor?.settled()),
+      onMic: state => { if (alive) setMic(state); },
     });
     engineRef.current = engine;
     engine.load().then(
@@ -255,15 +263,25 @@ export default function AirDraw() {
             onClick={() => gameRef.current?.leave()}
             data-hand-target
             aria-label="Back to languages"
-            className="font-toon fixed left-4 top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] shadow-[2px_3px_0_rgba(0,0,0,0.45)] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]"
+            className={`${TOP_BUTTON} left-4`}
           >
             ← Languages
           </button>
+          {!solved && (
+            <button
+              type="button"
+              onClick={() => gameRef.current?.nextRound()}
+              data-hand-target
+              className={`${TOP_BUTTON} right-4`}
+            >
+              Skip →
+            </button>
+          )}
 
           {/* the flashcard prompt: what to draw */}
-          <WordCard word={card.word} lang={card.lang} solved={solved} onSkip={() => gameRef.current?.nextRound()} />
+          <WordCard word={card.word} lang={card.lang} solved={solved} />
 
-          <GestureHints />
+          <GestureHints mic={mic} />
           {/* live top guesses, translated into the language being learnt (render-time lookup) */}
           <GuessFeed guesses={prediction.guesses} lang={card.lang} />
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
