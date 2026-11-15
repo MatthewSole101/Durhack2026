@@ -5,7 +5,7 @@ import { SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import { createDeck, isCorrect } from "@/features/game/deck";
-import { DebugPanel, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
 import type { Word } from "@/features/languages/words";
@@ -262,6 +262,8 @@ export default function AirDraw() {
           <WordCard word={card.word} lang={card.lang} solved={solved} onSkip={() => gameRef.current?.nextRound()} />
 
           <GestureHints />
+          {/* live top guesses, translated into the language being learnt (render-time lookup) */}
+          <GuessFeed guesses={prediction.guesses} lang={card.lang} />
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
         </>
       ) : (
