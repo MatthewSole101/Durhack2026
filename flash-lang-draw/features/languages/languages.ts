@@ -1,14 +1,15 @@
 // Languages a learner can pick on the start screen.
-// `tag` matches the short tag on the start-screen doodle cards.
+// `code` is the BCP 47 tag (also used for the `lang` attribute and as the key into a word's
+// translations); `tag` matches the short tag on the start-screen doodle cards.
 
 export const LANGUAGES = [
   { code: "es", tag: "ES", name: "Español", english: "Spanish" },
-  { code: "fr", tag: "FR", name: "Français", english: "French" },
-  { code: "de", tag: "DE", name: "Deutsch", english: "German" },
-  { code: "it", tag: "IT", name: "Italiano", english: "Italian" },
-  { code: "pt", tag: "PT", name: "Português", english: "Portuguese" },
+  { code: "ru", tag: "RU", name: "Русский", english: "Russian" },
+  { code: "pl", tag: "PL", name: "Polski", english: "Polish" },
+  { code: "id", tag: "ID", name: "Bahasa Indonesia", english: "Indonesian" },
+  { code: "te", tag: "TE", name: "తెలుగు", english: "Telugu" },
+  { code: "yo", tag: "YO", name: "Yorùbá", english: "Yoruba" },
   { code: "ja", tag: "JA", name: "日本語", english: "Japanese" },
-  { code: "ko", tag: "KO", name: "한국어", english: "Korean" },
 ] as const;
 
 export type Language = (typeof LANGUAGES)[number];

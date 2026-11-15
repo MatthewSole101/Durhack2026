@@ -36,7 +36,7 @@ export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: Lan
         </div>
         <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
           {solved && <span aria-hidden>✓ </span>}
-          <span lang={lang} data-testid="word">{word[lang]}</span>
+          <span lang={lang} data-testid="word">{word.t[lang]}</span>
         </div>
         <div className="font-hand text-lg leading-tight text-[#1d1b16]/55">{word.en}</div>
       </div>
@@ -78,7 +78,7 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
         <ol className="flex flex-col gap-1">
           {guesses.map((g, i) => {
             const word = wordForLabel(g.label);
-            const translated = word ? word[lang] : g.label;
+            const translated = word ? word.t[lang] : g.label;
             const english = word ? word.en : g.label;
             return (
               <li

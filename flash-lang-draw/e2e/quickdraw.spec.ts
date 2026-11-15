@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS } from "../features/air-draw/constants";
 import { createDeck, isCorrect } from "../features/game/deck";
+import { LANGUAGES } from "../features/languages/languages";
 import { WORDS, wordForLabel, type Word } from "../features/languages/words";
 import { fixBatchSize } from "../features/quickdraw/flatbuffer";
 import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
@@ -127,30 +128,46 @@ test.describe("labels and scoring", () => {
   });
 
   test("every flashcard word maps to Quick Draw classes; the top guess decides", () => {
+    expect(WORDS).toHaveLength(284);
     expect(new Set(WORDS.map(w => w.id)).size).toBe(WORDS.length);
     for (const w of WORDS) {
       expect(w.labels.length, w.id).toBeGreaterThan(0);
       for (const label of w.labels) expect(BUILTIN_LABELS, `${w.id} → ${label}`).toContain(label);
     }
-    const apple = WORDS.find(w => w.id === "apple")!, boat = WORDS.find(w => w.id === "boat")!;
-    expect(apple.es).toBe("la manzana");
+    // no class is claimed by two words (the later one would silently win in wordForLabel)
+    const claimed = WORDS.flatMap(w => w.labels);
+    expect(new Set(claimed).size).toBe(claimed.length);
+    const apple = WORDS.find(w => w.id === "apple")!, sailboat = WORDS.find(w => w.id === "sailboat")!;
+    expect(apple.t.es).toBe("la manzana");
     expect(isCorrect(apple, "apple")).toBe(true);
     expect(isCorrect(apple, "pear")).toBe(false);
     expect(isCorrect(apple, undefined)).toBe(false); // nothing drawn
-    expect(isCorrect(boat, "sailboat")).toBe(true); // "boat" is not a class: any kind of boat counts
-    expect(isCorrect(boat, "canoe")).toBe(true);
+    expect(isCorrect(sailboat, "sailboat")).toBe(true);
+    expect(isCorrect(sailboat, "canoe")).toBe(false); // each kind of boat is its own word
+  });
+
+  test("every word is translated into every language on the start screen", () => {
+    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "ru", "pl", "id", "te", "yo", "ja"]);
+    for (const w of WORDS) {
+      expect(Object.keys(w.t).sort(), w.id).toEqual(LANGUAGES.map(l => l.code).sort());
+      for (const l of LANGUAGES) expect(w.t[l.code].trim(), `${w.id}.${l.code}`).not.toBe("");
+    }
+    const sun = WORDS.find(w => w.id === "sun")!;
+    expect(sun.id).toBe("sun"); // the word's id, not its Indonesian translation
+    expect(sun.t).toEqual({ es: "el sol", ru: "солнце", pl: "słońce", id: "matahari", te: "సూర్యుడు", yo: "oòrùn", ja: "たいよう" });
   });
 
   test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
     // every label of every word resolves to that word (the reverse of the deck mapping)
     for (const w of WORDS) for (const label of w.labels) expect(wordForLabel(label), label).toBe(w);
-    // a multi-class word: any of its labels gives the same base word + translations
-    const boat = wordForLabel("sailboat")!;
-    expect(boat.en).toBe("boat");
-    expect(boat.es).toBe("el barco");
-    expect(boat.ja).toBe("ふね");
+    // a label with a space in it: the id is hyphenated, the label and the English are not
+    const alarm = wordForLabel("alarm clock")!;
+    expect(alarm.id).toBe("alarm-clock");
+    expect(alarm.en).toBe("alarm clock");
+    expect(alarm.t.es).toBe("el despertador");
+    expect(alarm.t.ja).toBe("めざましどけい");
     // labels the dictionary doesn't cover fall back to undefined (the feed shows the raw label)
-    expect(wordForLabel("line")).toBeUndefined();
+    expect(wordForLabel("squiggle")).toBeUndefined();
     expect(wordForLabel("The Eiffel Tower")).toBeUndefined();
   });
 
@@ -160,7 +177,7 @@ test.describe("labels and scoring", () => {
     expect(new Set(first).size).toBe(WORDS.length);
     expect(deal()).not.toBe(first.at(-1)); // no back-to-back repeat across the reshuffle
     const ordered = createDeck(WORDS.slice(0, 3), false);
-    expect([ordered(), ordered(), ordered(), ordered()].map(w => w.id)).toEqual(["sun", "cat", "house", "sun"]);
+    expect([ordered(), ordered(), ordered(), ordered()].map(w => w.id)).toEqual(["airplane", "alarm-clock", "ambulance", "airplane"]);
   });
 
   test("a labels file is accepted only with exactly 345 non-empty lines", () => {
@@ -370,9 +387,9 @@ test.describe("game", () => {
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses)).toEqual([]);
 
     // picking again deals the next word on a clean canvas, in the new language
-    await langButton(page, /Deutsch/).click();
-    await expect(card).toHaveAttribute("data-lang", "de");
-    await expect(card).toContainText("Draw this · Deutsch");
+    await langButton(page, /Polski/).click();
+    await expect(card).toHaveAttribute("data-lang", "pl");
+    await expect(card).toContainText("Draw this · Polski");
     await expect(page.getByTestId("word")).toHaveText("cat");
     await expect(card).toHaveAttribute("data-solved", "false");
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
@@ -396,8 +413,10 @@ test.describe("game", () => {
     const top = items.first();
     await expect(top).toHaveAttribute("data-rank", "1");
     await expect(top).toHaveAttribute("data-label", topLabel); // wired to real inference
-    // "line" has no dictionary entry, so the raw label is shown (the fallback path)
-    await expect(top).toContainText(topLabel);
+    // the guess is shown in the chosen language, not as the raw (English) label
+    expect(topLabel).toBe("line");
+    await expect(top).toContainText(wordForLabel(topLabel)!.t.es);
+    await expect(top).toContainText("la línea");
 
     // clear the canvas → back to the empty placeholder (no inference on an empty board)
     await page.keyboard.press("c");

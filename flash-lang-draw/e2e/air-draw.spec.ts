@@ -136,22 +136,22 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await page.addInitScript(installMock);
   await page.goto("/");
 
-  const french = langButton(page, /Français/);
-  await expect(french).toBeEnabled();
+  const russian = langButton(page, /Русский/);
+  await expect(russian).toBeEnabled();
   await page.waitForFunction(() => window.__detectCalls > 3); // menu-mode tracking is running
   await expect(page.getByRole("button", { name: /Start/ })).toHaveCount(0); // no separate Start button
 
-  // hover French: a French flag is painted in next to the finger, then the drawing page opens
+  // hover Russian: a Russian flag is painted in next to the finger, then the drawing page opens
   const cursor = page.getByTestId("hand-cursor");
-  await hoverHand(page, french, 1700);
+  await hoverHand(page, russian, 1700);
   await expect(cursor).toHaveAttribute("data-state", "dwell");
-  await expect(cursor).toHaveAttribute("data-flag", "fr");
+  await expect(cursor).toHaveAttribute("data-flag", "ru");
   await expect(page.getByTestId("hand-cursor-flag")).toBeVisible();
-  await expect(french).toHaveAttribute("data-hand-hover", "");
+  await expect(russian).toHaveAttribute("data-hand-hover", "");
   await expect(page.getByTestId("start-screen")).toBeHidden();
   const card = page.getByTestId("word-card");
-  await expect(card).toHaveAttribute("data-lang", "fr");
-  await expect(card).toContainText("Français");
+  await expect(card).toHaveAttribute("data-lang", "ru");
+  await expect(card).toContainText("Русский");
   // the gesture cheat-sheet is open when the drawing page opens
   await expect(page.getByTestId("gesture-hints")).toHaveAttribute("data-open", "true");
   await expect(page.getByTestId("gesture-hints")).toContainText("thumb pointing left");
@@ -168,8 +168,8 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await page.waitForFunction(() => window.__sceneDone);
 
   // mouse works too; Esc goes back
-  await langButton(page, /Deutsch/).click();
-  await expect(card).toHaveAttribute("data-lang", "de");
+  await langButton(page, /Polski/).click();
+  await expect(card).toHaveAttribute("data-lang", "pl");
   expect(await strokeCount(page)).toBe(0); // fresh canvas for the new card
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("start-screen")).toBeVisible();

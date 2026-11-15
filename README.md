@@ -18,7 +18,7 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 ## How a round works
 
 1. **Start screen.** The camera is on straight away. Pick one of seven languages (Spanish,
-   French, German, Italian, Portuguese, Japanese, Korean) with the mouse, or by holding your
+   Russian, Polish, Bahasa Indonesia, Telugu, Yoruba, Japanese) with the mouse, or by holding your
    index fingertip over a button until the ring fills.
 2. **Flashcard.** A card at the top shows a word in that language, with the English underneath.
 3. **Draw it in the air.** Strokes appear over the mirrored camera picture.
@@ -170,14 +170,23 @@ It only downloads the first few samples of each category (HTTP range requests).
 
 ## Words
 
-`features/languages/words.ts` holds 12 simple, drawable words in all seven languages: sun, cat,
-house, apple, fish, star, tree, moon, flower, dog, bird, boat. Each has a `labels` list: the
-Quick Draw classes that count as that word. "Boat" is not a class, so sailboat, speedboat,
-cruise ship and canoe all count. `features/game/deck.ts` deals every word once, shuffled,
-before any repeats.
+`features/languages/words.ts` holds 284 drawable words in all seven languages. Each word is one
+of the model's 345 Quick Draw classes; the other 61 classes (the Eiffel Tower, squiggle, …) have
+no entry, so they are never dealt and show up in English in the guess feed. Each word has a
+`labels` list (the Quick Draw classes that count as that word) and a `t` object with the word
+in each language, keyed by language code. `features/game/deck.ts` deals every word once,
+shuffled, before any repeats.
+
+The languages are listed in `features/languages/languages.ts`, and each has a flag in
+`features/languages/Flag.tsx` (Telugu uses India's, Yoruba uses Nigeria's). Spanish words carry
+their article, Japanese is written in kana, and Yoruba is written with tone marks. Many Yoruba
+(and some Telugu) words for modern objects are loanwords or descriptive phrases; they have not
+been checked by a native speaker.
 
 To add a word: add a row with its translations and one or more class names from
-`features/quickdraw/labels.ts`. A test fails if a label does not exist.
+`features/quickdraw/labels.ts`. To add a language: add it to `LANGUAGES`, give it a flag, and
+add its code to every word's `t`. Tests fail if a label does not exist, if two words claim the
+same label, or if a word is missing a language.
 
 ## Tests
 
@@ -187,7 +196,7 @@ npm run lint
 npm run test:e2e
 ```
 
-20 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
+24 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
 3111, its own `.next-e2e` build folder so it can run next to `npm run dev`):
 
 - `e2e/air-draw.spec.ts` — gestures, colour wheel, two-hand shapes, the hand-pressed start
@@ -211,7 +220,7 @@ the words dealt.
   the bitmaps the model was trained on. If recognition of real drawings is weak, `LINE_WIDTH`
   is the first thing to look at (it was specified, so it has not been changed).
 - Hand tracking still depends on a CDN.
-- Only 12 words.
+- The translations were not reviewed by native speakers (see [Words](#words)).
 
 ## Branches and history
 
