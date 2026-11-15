@@ -10,8 +10,8 @@ export function FlagArt({ code }: { code: LangCode }) {
   switch (code) {
     case "es":
       return <><rect width="30" height="20" fill="#c60b1e" /><rect y="5" width="30" height="10" fill="#ffc400" /></>;
-    case "ru":
-      return <><rect width="30" height={H3} fill="#fff" /><rect y={H3} width="30" height={H3} fill="#0039a6" /><rect y={2 * H3} width="30" height={H3} fill="#d52b1e" /></>;
+    case "uk":
+      return <><rect width="30" height="10" fill="#0057b7" /><rect y="10" width="30" height="10" fill="#ffd700" /></>;
     case "pl":
       return <><rect width="30" height="10" fill="#fff" /><rect y="10" width="30" height="10" fill="#dc143c" /></>;
     case "id":

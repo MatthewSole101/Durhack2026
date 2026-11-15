@@ -4,7 +4,7 @@
 
 export const LANGUAGES = [
   { code: "es", tag: "ES", name: "Español", english: "Spanish" },
-  { code: "ru", tag: "RU", name: "Русский", english: "Russian" },
+  { code: "uk", tag: "UA", name: "Українська", english: "Ukrainian" },
   { code: "pl", tag: "PL", name: "Polski", english: "Polish" },
   { code: "id", tag: "ID", name: "Bahasa Indonesia", english: "Indonesian" },
   { code: "te", tag: "TE", name: "తెలుగు", english: "Telugu" },

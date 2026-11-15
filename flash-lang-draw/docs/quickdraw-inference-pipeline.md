@@ -222,7 +222,7 @@ All of the above knobs live in `features/quickdraw/constants.ts` and are fixed (
   With a `keep` predicate, only the classes it accepts are ranked; probabilities are not
   renormalised.
 - The game ranks each output twice (`AirDraw.tsx`): `guesses` over all 345 classes (the debug
-  panel, and the win check) and `wordGuesses` over the 284 classes that are flashcard words (the
+  panel, and the win check) and `wordGuesses` over the 214 classes that are flashcard words (the
   "You drew…" feed, so it never lists a class the game has no word for). The predictor wraps both as
   `Prediction = { guesses: Guess[]; wordGuesses: Guess[]; input: Float32Array | null }` — carrying the exact
   784-value tensor alongside so consumers can render "what the model saw" — and delivers it to

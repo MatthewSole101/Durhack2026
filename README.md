@@ -18,7 +18,7 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 ## How a round works
 
 1. **Start screen.** The camera is on straight away. Pick one of seven languages (Spanish,
-   Russian, Polish, Bahasa Indonesia, Telugu, Yoruba, Japanese) with the mouse, or by holding your
+   Ukrainian, Polish, Bahasa Indonesia, Telugu, Yoruba, Japanese) with the mouse, or by holding your
    index fingertip over a button until the ring fills.
 2. **Flashcard.** A card at the top shows a word in that language, with the English underneath.
 3. **Draw it in the air.** Strokes appear over the mirrored camera picture.
@@ -173,10 +173,10 @@ It only downloads the first few samples of each category (HTTP range requests).
 
 ## Words
 
-`features/languages/words.ts` holds 284 drawable words in all seven languages. Each word is one
-of the model's 345 Quick Draw classes; the other 61 classes (the Eiffel Tower, squiggle, …) have
+`features/languages/words.ts` holds 214 drawable words in all seven languages. Each word is one
+of the model's 345 Quick Draw classes; the other 131 classes (the Eiffel Tower, squiggle, zebra, …) have
 no entry, so they are never dealt and never listed in the "You drew…" guess feed, which ranks the
-model's guesses among the 284 words only. (The `D` debug panel still shows the model's own top 5.) Each word has a
+model's guesses among the 214 words only. (The `D` debug panel still shows the model's own top 5.) Each word has a
 `labels` list (the Quick Draw classes that count as that word) and a `t` object with the word
 in each language, keyed by language code. `features/game/deck.ts` deals every word once,
 shuffled, before any repeats.

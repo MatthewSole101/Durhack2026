@@ -221,21 +221,21 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await page.addInitScript(installMock);
   await page.goto("/");
 
-  const russian = langButton(page, /Русский/);
-  await expect(russian).toBeEnabled();
+  const ukrainian = langButton(page, /Українська/);
+  await expect(ukrainian).toBeEnabled();
   await page.waitForFunction(() => window.__detectCalls > 3); // menu-mode tracking is running
   await expect(page.getByRole("button", { name: /Start/ })).toHaveCount(0); // no separate Start button
 
-  // hover Russian: a Russian flag is painted in next to the finger, then the drawing page opens
+  // hover Ukrainian: a Ukrainian flag is painted in next to the finger, then the drawing page opens
   const cursor = page.getByTestId("hand-cursor");
-  await hoverHand(page, russian, 1700);
+  await hoverHand(page, ukrainian, 1700);
   await expect(cursor).toHaveAttribute("data-state", "dwell");
-  await expect(cursor).toHaveAttribute("data-flag", "ru");
+  await expect(cursor).toHaveAttribute("data-flag", "uk");
   await expect(page.getByTestId("hand-cursor-flag")).toBeVisible();
-  await expect(russian).toHaveAttribute("data-hand-hover", "");
+  await expect(ukrainian).toHaveAttribute("data-hand-hover", "");
   await expect(page.getByTestId("start-screen")).toBeHidden();
   const card = page.getByTestId("word-card");
-  await expect(card).toHaveAttribute("data-lang", "ru");
+  await expect(card).toHaveAttribute("data-lang", "uk");
   // the gesture cheat-sheet is open when the drawing page opens
   await expect(page.getByTestId("gesture-hints")).toHaveAttribute("data-open", "true");
   await expect(page.getByTestId("gesture-hints")).toContainText("clap your hands");

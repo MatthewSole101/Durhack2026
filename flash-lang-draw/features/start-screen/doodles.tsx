@@ -41,7 +41,7 @@ export const DOODLES: Doodle[] = [
     </>,
   },
   {
-    id: "cat", word: "кошка", lang: "RU", color: "#f78fb3",
+    id: "cat", word: "кіт", lang: "UA", color: "#f78fb3",
     left: 94, top: 12, mLeft: 57, mTop: 7, size: 100, rotate: 7, delay: 0.35, float: 8,
     paths: <>
       {P("M22 40 L26 14 L42 30 Q50 27 58 30 L74 14 L78 40 Q84 72 50 80 Q16 72 22 40 Z")}

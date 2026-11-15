@@ -131,7 +131,7 @@ test.describe("labels and scoring", () => {
   });
 
   test("every flashcard word maps to Quick Draw classes; the top guess decides", () => {
-    expect(WORDS).toHaveLength(284);
+    expect(WORDS).toHaveLength(214);
     expect(new Set(WORDS.map(w => w.id)).size).toBe(WORDS.length);
     for (const w of WORDS) {
       expect(w.labels.length, w.id).toBeGreaterThan(0);
@@ -150,14 +150,14 @@ test.describe("labels and scoring", () => {
   });
 
   test("every word is translated into every language on the start screen", () => {
-    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "ru", "pl", "id", "te", "yo", "ja"]);
+    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "uk", "pl", "id", "te", "yo", "ja"]);
     for (const w of WORDS) {
       expect(Object.keys(w.t).sort(), w.id).toEqual(LANGUAGES.map(l => l.code).sort());
       for (const l of LANGUAGES) expect(w.t[l.code].trim(), `${w.id}.${l.code}`).not.toBe("");
     }
     const sun = WORDS.find(w => w.id === "sun")!;
     expect(sun.id).toBe("sun"); // the word's id, not its Indonesian translation
-    expect(sun.t).toEqual({ es: "el sol", ru: "солнце", pl: "słońce", id: "matahari", te: "సూర్యుడు", yo: "oòrùn", ja: "たいよう" });
+    expect(sun.t).toEqual({ es: "el sol", uk: "сонце", pl: "słońce", id: "matahari", te: "సూర్యుడు", yo: "oòrùn", ja: "たいよう" });
   });
 
   test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
@@ -213,7 +213,7 @@ test.describe("labels and scoring", () => {
   });
 
   test("the guesses shown to the player are ranked among the flashcard words only", () => {
-    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 284 words; the other 61 classes are never shown
+    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 214 words; the other 131 classes are never shown
     // a drawing the model mostly takes for things that are not flashcard words
     const probs = BUILTIN_LABELS.map(() => 0);
     const likely = { squiggle: 0.4, "The Eiffel Tower": 0.2, line: 0.15, zigzag: 0.1, snake: 0.06, river: 0.04, rain: 0.03, grass: 0.02 };
@@ -499,13 +499,14 @@ test.describe("game", () => {
     await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
     await expect(items).toHaveCount(0);
 
-    // a rectangle: one of the model's own top five ("postcard") is not a flashcard word.
-    // The feed leaves it out and still lists five words; the debug panel keeps the model's view.
+    // a rectangle: two of the model's own top five ("keyboard", "postcard") are not flashcard words.
+    // The feed leaves them out and still lists five words; the debug panel keeps the model's view.
     await play(page, "rect");
     await expect(items).toHaveCount(5);
     const raw = await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => g.label));
-    expect(raw.filter(l => !isWord(l))).toEqual(["postcard"]);
+    expect(raw.filter(l => !isWord(l))).toEqual(["keyboard", "postcard"]);
     const listed = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+    expect(listed).not.toContain("keyboard");
     expect(listed).not.toContain("postcard");
     for (const label of listed) expect(isWord(label), label).toBe(true);
     expect(listed).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
