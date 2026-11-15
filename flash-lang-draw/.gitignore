@@ -13,11 +13,12 @@
 # testing
 /coverage
 /.next-e2e/
+/.next-perf/
 /test-results/
 /playwright-report/
 
 # next.js
-/.next/
+.next/
 /out/
 
 # production

@@ -18,32 +18,35 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 ## How a round works
 
 1. **Start screen.** The camera is on straight away. Pick one of seven languages (Spanish,
-   French, German, Italian, Portuguese, Japanese, Korean) with the mouse, or by holding your
+   Ukrainian, Polish, Bahasa Indonesia, Telugu, Yoruba, Japanese) with the mouse, or by holding your
    index fingertip over a button until the ring fills.
 2. **Flashcard.** A card at the top shows a word in that language, with the English underneath.
 3. **Draw it in the air.** Strokes appear over the mirrored camera picture.
 4. **Live judging.** Every change to the drawing is classified in the browser. As soon as the
    model's **top guess** is the word on the card, the card turns green ("Correct!") and the next
    word comes up after 1.6 s on a clean canvas.
-5. **Skip / leave.** "skip ›" under the card (or `N`) deals the next word. "← Languages" (or
+5. **Skip / leave.** "Skip →" (or `N`) gives up on the word: the card shows what it means in
+   English, with a doodle of it from the Quick, Draw! dataset in the middle of the screen, for
+   3 s, then the next word comes up ("Next →" or `N` again moves on at once). "← Languages" (or
    `Esc`) goes back to the language list.
 
 ### Gestures
 
 | Gesture | What it does |
 |---|---|
-| ☝️ Point (index out, other fingers curled, thumb tucked) | Draw |
-| 🤏🤏 Pinch twice quickly | Undo |
-| 👋 Flick an open hand across | Clear |
+| 🤏 Pinch thumb and index together, then move | Draw |
+| 👈 Fist with the thumb pointing left | Undo |
+| 👉 Fist with the thumb pointing right | Redo |
+| 👏 Clap your hands (two open hands brought together quickly), or 🫰 snap your fingers | Clear |
 | ✋ Hold an open palm still, tilt, then make a fist | Colour wheel: tilt chooses, fist picks |
 | Both hands pinch, pull apart, let go | Straight line |
 | An "L" with each hand, pull apart, close the hands | Rectangle (snaps to a square when close) |
-| Index tips and thumb tips touching, pull apart, close | Triangle |
+| An "O" with both hands (index tips and thumb tips touching), pull apart, close | Circle |
 | Hold a fingertip over a button | Press it (start screen, back button) |
 
 ### Keys
 
-`C` clear · `Z` undo · `N` skip the word · `Esc` back to languages · `H` show/hide the gesture
+`C` clear · `Z` undo · `Shift+Z` / `Y` redo · `N` skip the word · `Esc` back to languages · `H` show/hide the gesture
 hints · `D` show/hide the debug panel (the model's top-5 guesses, the 28×28 image it is
 actually fed, and the load status).
 
@@ -144,7 +147,7 @@ The drawing is re-rendered from its vector strokes, never read back from the vis
 
 `CENTER = true` and `INVERT = false` are named constants with no UI. The model card says the
 opposite polarity (white background, black strokes). **The model card is wrong**, as measured
-below. Two-hand rectangles and triangles are fed as closed outlines.
+below. Two-hand rectangles and circles are fed as closed outlines.
 
 ### Verification
 
@@ -170,14 +173,30 @@ It only downloads the first few samples of each category (HTTP range requests).
 
 ## Words
 
-`features/languages/words.ts` holds 12 simple, drawable words in all seven languages: sun, cat,
-house, apple, fish, star, tree, moon, flower, dog, bird, boat. Each has a `labels` list: the
-Quick Draw classes that count as that word. "Boat" is not a class, so sailboat, speedboat,
-cruise ship and canoe all count. `features/game/deck.ts` deals every word once, shuffled,
-before any repeats.
+`features/languages/words.ts` holds 214 drawable words in all seven languages. Each word is one
+of the model's 345 Quick Draw classes; the other 131 classes (the Eiffel Tower, squiggle, zebra, …) have
+no entry, so they are never dealt and never listed in the "You drew…" guess feed, which ranks the
+model's guesses among the 214 words only. (The `D` debug panel still shows the model's own top 5.) Each word has a
+`labels` list (the Quick Draw classes that count as that word) and a `t` object with the word
+in each language, keyed by language code. `features/game/deck.ts` deals every word once,
+shuffled, before any repeats.
+
+The languages are listed in `features/languages/languages.ts`, and each has a flag in
+`features/languages/Flag.tsx` (Telugu uses India's, Yoruba uses Nigeria's). Spanish words carry
+their article, Japanese is written in kana, and Yoruba is written with tone marks. Many Yoruba
+(and some Telugu) words for modern objects are loanwords or descriptive phrases; they have not
+been checked by a native speaker.
+
+`public/doodles/quickdraw.json` holds one doodle per word, shown when the word is skipped
+(`features/game/SkipDoodle.tsx`). They are real drawings from Google's
+[Quick, Draw! dataset](https://github.com/googlecreativelab/quickdraw-dataset) (CC BY 4.0): for
+each word, the one of its first 30 recognised samples that this app's model is most sure about.
+Each stroke is stored as an SVG path in the dataset's 0–255 coordinate space.
 
 To add a word: add a row with its translations and one or more class names from
-`features/quickdraw/labels.ts`. A test fails if a label does not exist.
+`features/quickdraw/labels.ts`, and a doodle for its first class in `quickdraw.json`. To add a language: add it to `LANGUAGES`, give it a flag, and
+add its code to every word's `t`. Tests fail if a label does not exist, if two words claim the
+same label, or if a word is missing a language.
 
 ## Tests
 
@@ -187,7 +206,7 @@ npm run lint
 npm run test:e2e
 ```
 
-20 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
+33 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
 3111, its own `.next-e2e` build folder so it can run next to `npm run dev`):
 
 - `e2e/air-draw.spec.ts` — gestures, colour wheel, two-hand shapes, the hand-pressed start
@@ -211,7 +230,7 @@ the words dealt.
   the bitmaps the model was trained on. If recognition of real drawings is weak, `LINE_WIDTH`
   is the first thing to look at (it was specified, so it has not been changed).
 - Hand tracking still depends on a CDN.
-- Only 12 words.
+- The translations were not reviewed by native speakers (see [Words](#words)).
 
 ## Branches and history
 

@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SOLVED_MS, TOAST_MS } from "./constants";
+import { REVEAL_MS, SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
+import type { MicState } from "./snap-audio";
 import { createDeck, isCorrect } from "@/features/game/deck";
-import { DebugPanel, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { loadDoodles, SkipDoodle } from "@/features/game/SkipDoodle";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
-import type { Word } from "@/features/languages/words";
-import { INPUT_SIZE } from "@/features/quickdraw/constants";
-import { loadQuickDrawModel, type QuickDrawModel } from "@/features/quickdraw/model";
+import { wordForLabel, type Word } from "@/features/languages/words";
+import { INPUT_SIZE, TOP_K } from "@/features/quickdraw/constants";
+import { loadQuickDrawModel, topK, type QuickDrawModel } from "@/features/quickdraw/model";
 import { createPredictor, type Prediction, type Predictor } from "@/features/quickdraw/predictor";
 import { createPreprocessor, type Strokes } from "@/features/quickdraw/preprocess";
 import { loadRuntime } from "@/features/quickdraw/runtime";
@@ -19,9 +21,16 @@ import StartScreen from "@/features/start-screen/StartScreen";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const cameraError = (e: unknown) =>
   `Camera unavailable: ${message(e)} — open this page via http://localhost or https.`;
-const NO_PREDICTION: Prediction = { guesses: [], input: null };
+const NO_PREDICTION: Prediction = { guesses: [], wordGuesses: [], input: null };
+/** The model knows more classes than there are flashcard words; the player only sees the words. */
+const isWord = (label: string) => wordForLabel(label) !== undefined;
 
 type Card = { lang: LangCode; word: Word };
+
+// the buttons in the top corners of the drawing page; data-hand-target makes them pressable by
+// holding a fingertip over them (see HandCursor)
+const TOP_BUTTON =
+  "font-toon fixed top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]";
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): the round can be chosen and the classifier driven directly.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
@@ -46,6 +55,8 @@ type TestWindow = Window & {
 type Game = {
   /** Clear the canvas and deal the next word. */
   nextRound: () => Word;
+  /** Give up on the word: show what it means in English for a moment, then deal the next one. */
+  skip: () => void;
   /** Back to the language list. */
   leave: () => void;
 };
@@ -67,17 +78,22 @@ export default function AirDraw() {
   const [card, setCard] = useState<Card | null>(null); // set = on the drawing page
 
   const [solved, setSolved] = useState(false);
+  const [revealed, setRevealed] = useState(false); // skipped: the card shows the English
   const [classifier, setClassifier] = useState<ClassifierStatus>({ state: "runtime" });
   const [prediction, setPrediction] = useState(NO_PREDICTION);
   const [debug, setDebug] = useState(false);
+  const [mic, setMic] = useState<MicState>("off"); // microphone for hearing finger snaps
 
   useEffect(() => {
     let alive = true;
     let toastTimer: ReturnType<typeof setTimeout>;
     let solvedTimer: ReturnType<typeof setTimeout>;
+    const correctSound = new Audio("/sounds/correct.mp3");  
+    correctSound.preload = "auto";
     let model: QuickDrawModel | null = null;
     let predictor: Predictor | null = null;
     let current: Word | null = null, won = false; // the word on screen, while on the drawing page
+    let skipped = false; // the word was given up on: its English is showing, it can't be won any more
 
     const testWindow = TEST_BUILD ? (window as TestWindow) : null;
     const deck = testWindow?.__gameDeck;
@@ -95,9 +111,10 @@ export default function AirDraw() {
       onError: msg => { console.error(msg); setError(msg); },
       onPointer: p => cursorRef.current?.update(p),
       onStrokes: state => (state === "drawing" ? predictor?.drawing() : predictor?.settled()),
+      onMic: state => { if (alive) setMic(state); },
     });
     engineRef.current = engine;
-    const handsLoaded = engine.load().then(
+    engine.load().then(
       () => { if (alive) setModelReady(true); },
       e => { if (alive) setStatus("Failed to load model: " + message(e)); },
     );
@@ -107,15 +124,17 @@ export default function AirDraw() {
       e => { if (alive) setStatus(cameraError(e)); },
     );
 
+    loadDoodles().catch(e => console.error(e)); // ready before the first skip; a skip still works without them
+
     // ---------------- rounds ----------------
     function nextRound() {
       clearTimeout(solvedTimer);
       engine.reset();
       predictor?.reset(); // a guess for the old drawing must not count for the new word
       const word = current = deal();
-      won = false;
+      won = false; skipped = false;
       setCard(c => c && { ...c, word });
-      setSolved(false); setPrediction(NO_PREDICTION);
+      setSolved(false); setRevealed(false); setPrediction(NO_PREDICTION);
       if (hook) { hook.prediction = NO_PREDICTION; hook.rounds.push(word.id); }
       return word;
     }
@@ -124,20 +143,33 @@ export default function AirDraw() {
       clearTimeout(solvedTimer);
       engine.setMode("menu");
       predictor?.reset();
-      current = null; won = false;
+      current = null; won = false; skipped = false;
       setCard(null); setError("");
-      setSolved(false); setPrediction(NO_PREDICTION);
+      setSolved(false); setRevealed(false); setPrediction(NO_PREDICTION);
       if (hook) hook.prediction = NO_PREDICTION;
     }
-    gameRef.current = { nextRound, leave };
+
+    // Skipping shows the answer first (its English, and a doodle of it): the learner skipped
+    // because they don't know the word.
+    // A second skip (or one on a solved word) moves on straight away.
+    function skip() {
+      if (!current) return;
+      if (won || skipped) { nextRound(); return; }
+      skipped = true;
+      setRevealed(true);
+      solvedTimer = setTimeout(nextRound, REVEAL_MS);
+    }
+    gameRef.current = { nextRound, skip, leave };
 
     function onPrediction(p: Prediction) {
       if (!current) return; // back on the language list
       setPrediction(p);
       if (hook) hook.prediction = p;
-      if (!won && isCorrect(current, p.guesses[0]?.label)) {
+      if (!won && !skipped && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
+        correctSound.currentTime = 0;
+        correctSound.play().catch(() => { /* autoplay blocked until the first click or key press */ });
         solvedTimer = setTimeout(nextRound, SOLVED_MS);
       }
     }
@@ -166,15 +198,20 @@ export default function AirDraw() {
       },
     }) : undefined;
 
-    // one wasm runtime at a time: see features/quickdraw/runtime.ts
-    handsLoaded.then(() => loadQuickDrawModel(stage => report({ state: stage }))).then(
+    // Load the classifier now, alongside the hand tracker (which runs in its own worker), so its
+    // main-thread compile happens under "Loading hand tracking…" rather than while the player is
+    // already pointing at a language. Main-thread wasm loads are serialised by withWasmLoadLock.
+    loadQuickDrawModel(stage => report({ state: stage })).then(
       m => {
         if (!alive) { m.dispose(); return; }
         model = m;
         predictor = createPredictor({
           getStrokes: engine.getStrokes,
           toInput: preprocessor.toInput,
-          predict: m.predict,
+          predict: async input => {
+            const probs = await m.probabilities(input);
+            return { guesses: topK(probs, m.labels), wordGuesses: topK(probs, m.labels, TOP_K, isWord) };
+          },
           onPrediction,
           onError: e => { console.error(e); report({ state: "error", message: message(e) }); },
         });
@@ -189,7 +226,7 @@ export default function AirDraw() {
       const k = e.key.toLowerCase();
       if (k === "escape") leave(); // Esc → back to the language list
       if (k === "d") setDebug(d => !d);
-      if (k === "n") nextRound();
+      if (k === "n") skip();
     }
     window.addEventListener("keydown", onKey);
 
@@ -253,15 +290,29 @@ export default function AirDraw() {
             onClick={() => gameRef.current?.leave()}
             data-hand-target
             aria-label="Back to languages"
-            className="font-toon fixed left-4 top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] shadow-[2px_3px_0_rgba(0,0,0,0.45)] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]"
+            className={`${TOP_BUTTON} left-4`}
           >
             ← Languages
           </button>
+          {!solved && (
+            <button
+              type="button"
+              onClick={() => gameRef.current?.skip()}
+              data-hand-target
+              className={`${TOP_BUTTON} right-4`}
+            >
+              {revealed ? "Next →" : "Skip →"}
+            </button>
+          )}
 
           {/* the flashcard prompt: what to draw */}
-          <WordCard word={card.word} lang={card.lang} solved={solved} onSkip={() => gameRef.current?.nextRound()} />
+          <WordCard word={card.word} lang={card.lang} solved={solved} revealed={revealed} />
+          {/* skipped: a Quick Draw doodle of the word, in the middle of the screen */}
+          {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
 
-          <GestureHints />
+          <GestureHints mic={mic} />
+          {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup) */}
+          <GuessFeed guesses={prediction.wordGuesses} lang={card.lang} />
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
         </>
       ) : (

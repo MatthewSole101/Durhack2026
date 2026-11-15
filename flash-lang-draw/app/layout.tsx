@@ -26,7 +26,7 @@ const patrickHand = Patrick_Hand({
 });
 
 export const metadata: Metadata = {
-  title: "Langotoon",
+  title: "Langdöödle",
   description: "Learn vocabulary by drawing flashcard prompts in the air.",
 };
 

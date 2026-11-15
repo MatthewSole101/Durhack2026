@@ -3,11 +3,15 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS } from "../features/air-draw/constants";
 import { createDeck, isCorrect } from "../features/game/deck";
-import { WORDS, type Word } from "../features/languages/words";
+import { LANGUAGES } from "../features/languages/languages";
+import { WORDS, wordForLabel, type Word } from "../features/languages/words";
 import { fixBatchSize } from "../features/quickdraw/flatbuffer";
 import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
 import { toProbabilities, topK } from "../features/quickdraw/model";
 import { installMock, langButton, play, testWord, trackErrors } from "./support/mock-hand";
+
+/** Is this Quick Draw class one of the flashcard words? (The same rule the game uses for the guess feed.) */
+const isWord = (label: string) => wordForLabel(label) !== undefined;
 
 // ---------------------------------------------------------------------------------------------
 // Pure logic (runs in Node)
@@ -127,18 +131,47 @@ test.describe("labels and scoring", () => {
   });
 
   test("every flashcard word maps to Quick Draw classes; the top guess decides", () => {
+    expect(WORDS).toHaveLength(214);
     expect(new Set(WORDS.map(w => w.id)).size).toBe(WORDS.length);
     for (const w of WORDS) {
       expect(w.labels.length, w.id).toBeGreaterThan(0);
       for (const label of w.labels) expect(BUILTIN_LABELS, `${w.id} → ${label}`).toContain(label);
     }
-    const apple = WORDS.find(w => w.id === "apple")!, boat = WORDS.find(w => w.id === "boat")!;
-    expect(apple.es).toBe("la manzana");
+    // no class is claimed by two words (the later one would silently win in wordForLabel)
+    const claimed = WORDS.flatMap(w => w.labels);
+    expect(new Set(claimed).size).toBe(claimed.length);
+    const apple = WORDS.find(w => w.id === "apple")!, sailboat = WORDS.find(w => w.id === "sailboat")!;
+    expect(apple.t.es).toBe("la manzana");
     expect(isCorrect(apple, "apple")).toBe(true);
     expect(isCorrect(apple, "pear")).toBe(false);
     expect(isCorrect(apple, undefined)).toBe(false); // nothing drawn
-    expect(isCorrect(boat, "sailboat")).toBe(true); // "boat" is not a class: any kind of boat counts
-    expect(isCorrect(boat, "canoe")).toBe(true);
+    expect(isCorrect(sailboat, "sailboat")).toBe(true);
+    expect(isCorrect(sailboat, "canoe")).toBe(false); // each kind of boat is its own word
+  });
+
+  test("every word is translated into every language on the start screen", () => {
+    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "uk", "pl", "id", "te", "yo", "ja"]);
+    for (const w of WORDS) {
+      expect(Object.keys(w.t).sort(), w.id).toEqual(LANGUAGES.map(l => l.code).sort());
+      for (const l of LANGUAGES) expect(w.t[l.code].trim(), `${w.id}.${l.code}`).not.toBe("");
+    }
+    const sun = WORDS.find(w => w.id === "sun")!;
+    expect(sun.id).toBe("sun"); // the word's id, not its Indonesian translation
+    expect(sun.t).toEqual({ es: "el sol", uk: "сонце", pl: "słońce", id: "matahari", te: "సూర్యుడు", yo: "oòrùn", ja: "たいよう" });
+  });
+
+  test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
+    // every label of every word resolves to that word (the reverse of the deck mapping)
+    for (const w of WORDS) for (const label of w.labels) expect(wordForLabel(label), label).toBe(w);
+    // a label with a space in it: the id is hyphenated, the label and the English are not
+    const alarm = wordForLabel("alarm clock")!;
+    expect(alarm.id).toBe("alarm-clock");
+    expect(alarm.en).toBe("alarm clock");
+    expect(alarm.t.es).toBe("el despertador");
+    expect(alarm.t.ja).toBe("めざましどけい");
+    // labels the dictionary doesn't cover fall back to undefined (the feed shows the raw label)
+    expect(wordForLabel("squiggle")).toBeUndefined();
+    expect(wordForLabel("The Eiffel Tower")).toBeUndefined();
   });
 
   test("the deck deals every word once before repeating", () => {
@@ -147,7 +180,7 @@ test.describe("labels and scoring", () => {
     expect(new Set(first).size).toBe(WORDS.length);
     expect(deal()).not.toBe(first.at(-1)); // no back-to-back repeat across the reshuffle
     const ordered = createDeck(WORDS.slice(0, 3), false);
-    expect([ordered(), ordered(), ordered(), ordered()].map(w => w.id)).toEqual(["sun", "cat", "house", "sun"]);
+    expect([ordered(), ordered(), ordered(), ordered()].map(w => w.id)).toEqual(["airplane", "alarm-clock", "ambulance", "airplane"]);
   });
 
   test("a labels file is accepted only with exactly 345 non-empty lines", () => {
@@ -163,6 +196,33 @@ test.describe("labels and scoring", () => {
     expect(fromLogits.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
     expect(fromLogits[1]).toBeGreaterThan(fromLogits[2]);
     expect(topK(probs, ["a", "b", "c"], 2)).toEqual([{ label: "b", prob: probs[1] }, { label: "c", prob: probs[2] }]);
+    // ranking a subset: rejected classes are skipped, the probabilities are still the model's own
+    expect(topK(probs, ["a", "b", "c"], 2, l => l !== "b")).toEqual([{ label: "c", prob: probs[2] }, { label: "a", prob: probs[0] }]);
+  });
+
+  test("every flashcard word has a Quick Draw doodle to show when it is skipped", () => {
+    const doodles: Record<string, string[]> = JSON.parse(readFileSync(join(__dirname, "../public/doodles/quickdraw.json"), "utf8"));
+    expect(Object.keys(doodles).sort()).toEqual(WORDS.map(w => w.labels[0]).sort()); // one each, no strays
+    for (const [label, strokes] of Object.entries(doodles)) {
+      expect(strokes.length, label).toBeGreaterThan(0);
+      for (const d of strokes) {
+        expect(d, label).toMatch(/^M\d+ \d+(L\d+ \d+)+$|^M\d+ \d+h0\.01$/); // a polyline, or a dot
+        for (const n of d.match(/\d+/g)!.map(Number)) expect(n, label).toBeLessThanOrEqual(255); // inside the 0..255 box
+      }
+    }
+  });
+
+  test("the guesses shown to the player are ranked among the flashcard words only", () => {
+    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 214 words; the other 131 classes are never shown
+    // a drawing the model mostly takes for things that are not flashcard words
+    const probs = BUILTIN_LABELS.map(() => 0);
+    const likely = { squiggle: 0.4, "The Eiffel Tower": 0.2, line: 0.15, zigzag: 0.1, snake: 0.06, river: 0.04, rain: 0.03, grass: 0.02 };
+    for (const [label, p] of Object.entries(likely)) probs[BUILTIN_LABELS.indexOf(label)] = p;
+    expect(topK(probs, BUILTIN_LABELS).map(g => g.label)).toEqual(["squiggle", "The Eiffel Tower", "line", "zigzag", "snake"]);
+    expect(topK(probs, BUILTIN_LABELS, 5, isWord)).toEqual([
+      { label: "line", prob: 0.15 }, { label: "snake", prob: 0.06 }, { label: "river", prob: 0.04 },
+      { label: "rain", prob: 0.03 }, { label: "grass", prob: 0.02 },
+    ]);
   });
 });
 
@@ -293,13 +353,18 @@ test.describe("game", () => {
 
     await expect(page.getByTestId("word")).toHaveText("line");
     await expect(card).toHaveAttribute("data-solved", "false");
-    await expect(card).toContainText("Draw this · Español");
+    await expect(card).toHaveAttribute("data-lang", "es");
+    // the language being learnt, then the word in it. Never the English.
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Draw this");
+    await expect(card).toHaveText("Español · Draw thisline");
+    await expect(page.getByTestId("word-card-heading").locator("svg")).toBeVisible(); // the flag
 
-    await play(page, "pointTucked"); // a straight horizontal stroke
+    await play(page, "pinchDraw"); // a straight horizontal stroke
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label)).toBe("line");
     await expect(card).toHaveAttribute("data-solved", "true");
-    await expect(card).toContainText("Correct!");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Correct!");
+    await expect(page.getByRole("button", { name: /Skip/ })).toHaveCount(0); // nothing to skip once solved
 
     // next round: new word, clean canvas, guesses reset
     await expect(page.getByTestId("word")).toHaveText("zebra", { timeout: 5_000 });
@@ -308,7 +373,7 @@ test.describe("game", () => {
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses)).toEqual([]);
 
     // the same drawing is not a zebra: the word stays
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     await page.waitForTimeout(300);
     await expect(page.getByTestId("word")).toHaveText("zebra");
@@ -318,12 +383,13 @@ test.describe("game", () => {
   });
 
   test("guesses follow the drawing: top 5 with percentages, cleared with the canvas, skip moves on", async ({ page }) => {
-    await startGame(page, [testWord("cat", "cat"), testWord("zebra", "zebra")]);
+    // the first word is Spanish with a different English, so the reveal can be told apart from the word
+    await startGame(page, [{ ...testWord("cat", "cat"), t: { ...testWord("cat").t, es: "el gato" } }, testWord("line", "line"), testWord("zebra", "zebra")]);
     await page.keyboard.press("d");
     const guesses = page.getByTestId("quickdraw-guesses").getByRole("listitem");
     await expect(guesses).toHaveText(["Draw something…"]);
 
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await expect(guesses).toHaveCount(5);
     await expect(guesses.first()).toHaveText(/^1\. line\d+\.\d%$/);
 
@@ -332,9 +398,43 @@ test.describe("game", () => {
     await page.keyboard.press("z"); // undo the clear: judged again straight away
     await expect(guesses).toHaveCount(5);
 
-    await expect(page.getByTestId("word")).toHaveText("cat");
-    await page.getByRole("button", { name: "skip ›" }).click();
+    // skip: the card first says what the word means in English, then the next word comes up
+    const card = page.getByTestId("word-card"), english = page.getByTestId("word-english");
+    await expect(page.getByTestId("word")).toHaveText("el gato");
+    await expect(english).toHaveCount(0); // not while the word is still to be drawn
+    await page.getByRole("button", { name: /Skip/ }).click();
+    await expect(card).toHaveAttribute("data-revealed", "true");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Skipped");
+    await expect(page.getByTestId("word")).toHaveText("el gato");
+    await expect(english).toHaveText("in English: cat");
+    // …and a Quick Draw doodle of it is shown in the middle of the screen, clear of the card
+    const doodle = page.getByTestId("skip-doodle");
+    await expect(doodle).toBeVisible();
+    await expect(doodle).toHaveAttribute("data-label", "cat");
+    await expect(doodle.getByRole("img", { name: "A doodle of: cat" })).toBeVisible();
+    expect(await doodle.locator("path").count()).toBeGreaterThan(0);
+    const [box, cardBox, view] = [await doodle.boundingBox(), await card.boundingBox(), page.viewportSize()!];
+    expect(Math.abs(box!.x + box!.width / 2 - view.width / 2)).toBeLessThan(20);
+    expect(Math.abs(box!.y + box!.height / 2 - view.height / 2)).toBeLessThan(20);
+    expect(box!.y).toBeGreaterThan(cardBox!.y + cardBox!.height);
+    await expect(page.getByTestId("word")).toHaveText("line", { timeout: 5_000 }); // moves on by itself
+    await expect(card).toHaveAttribute("data-revealed", "false");
+    await expect(english).toHaveCount(0);
+    await expect(doodle).toHaveCount(0);
+    await expect(guesses).toHaveText(["Draw something…"]);
+    expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
+
+    // a skipped word can't be won any more, and skipping again (here: N) moves on straight away
+    await page.keyboard.press("n");
+    await expect(english).toHaveText("in English: line");
+    await expect(page.getByTestId("skip-doodle")).toHaveAttribute("data-label", "line");
+    await play(page, "pinchDraw"); // a line, drawn too late
+    await expect(guesses.first()).toHaveText(/^1\. line/);
+    await expect(card).toHaveAttribute("data-solved", "false");
+    await page.getByRole("button", { name: "Next →" }).click();
     await expect(page.getByTestId("word")).toHaveText("zebra");
+    await expect(english).toHaveCount(0);
+    await expect(page.getByTestId("skip-doodle")).toHaveCount(0);
     await expect(guesses).toHaveText(["Draw something…"]);
 
     await page.keyboard.press("d");
@@ -350,19 +450,67 @@ test.describe("game", () => {
     await expect(card).toHaveAttribute("data-solved", "true");
     await expect(page.getByTestId("word")).toHaveText("zebra", { timeout: 5_000 });
 
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     await page.getByRole("button", { name: "Back to languages" }).click();
     await expect(page.getByTestId("start-screen")).toBeVisible();
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses)).toEqual([]);
 
     // picking again deals the next word on a clean canvas, in the new language
-    await langButton(page, /Deutsch/).click();
-    await expect(card).toHaveAttribute("data-lang", "de");
-    await expect(card).toContainText("Draw this · Deutsch");
+    await langButton(page, /Polski/).click();
+    await expect(card).toHaveAttribute("data-lang", "pl");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Polski · Draw this");
     await expect(page.getByTestId("word")).toHaveText("cat");
     await expect(card).toHaveAttribute("data-solved", "false");
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
     expect(await page.evaluate(() => window.__quickDraw.rounds)).toEqual(["line", "zebra", "cat"]);
+  });
+
+  test("the live translated guess feed tracks the drawing and the chosen language", async ({ page }) => {
+    await startGame(page); // picks Español
+    const feed = page.getByTestId("guess-feed");
+    const items = page.getByTestId("guess-feed-item");
+
+    // bound to the selected language, with the empty placeholder before anything is drawn
+    await expect(feed).toHaveAttribute("data-lang", "es");
+    await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
+    await expect(items).toHaveCount(0);
+
+    // draw a straight line: the feed fills from the model's live top guesses
+    await play(page, "pinchDraw");
+    await expect(items).toHaveCount(5);
+    const shown = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+    // only flashcard words are listed: the best five of them, by the model's own probabilities
+    for (const label of shown) expect(isWord(label), label).toBe(true);
+    const probs = await page.evaluate(() => window.__quickDraw.probabilities(Array.from(window.__quickDraw.prediction.input!)));
+    expect(shown).toEqual(topK(probs, BUILTIN_LABELS, 5, isWord).map(g => g.label));
+    expect(shown).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
+    const topLabel = await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label);
+    const top = items.first();
+    await expect(top).toHaveAttribute("data-rank", "1");
+    await expect(top).toHaveAttribute("data-label", topLabel); // wired to real inference
+    // the guess is shown in the chosen language, not as the raw (English) label
+    expect(topLabel).toBe("line");
+    await expect(top).toContainText(wordForLabel(topLabel)!.t.es);
+    await expect(top).toContainText("la línea");
+
+    // clear the canvas → back to the empty placeholder (no inference on an empty board)
+    await page.keyboard.press("c");
+    await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
+    await expect(items).toHaveCount(0);
+
+    // a rectangle: two of the model's own top five ("keyboard", "postcard") are not flashcard words.
+    // The feed leaves them out and still lists five words; the debug panel keeps the model's view.
+    await play(page, "rect");
+    await expect(items).toHaveCount(5);
+    const raw = await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => g.label));
+    expect(raw.filter(l => !isWord(l))).toEqual(["keyboard", "postcard"]);
+    const listed = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+    expect(listed).not.toContain("keyboard");
+    expect(listed).not.toContain("postcard");
+    for (const label of listed) expect(isWord(label), label).toBe(true);
+    expect(listed).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
+    await page.keyboard.press("d");
+    await expect(page.getByTestId("quickdraw-guesses").getByRole("listitem").nth(raw.indexOf("postcard"))).toContainText("postcard");
   });
 });

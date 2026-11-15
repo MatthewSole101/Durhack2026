@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS, PALETTE } from "../features/air-draw/constants";
-import { hoverHand, installMock, langButton, play, testWord, trackErrors } from "./support/mock-hand";
+import { forgotten, hoverHand, installMock, langButton, play, testWord, trackErrors } from "./support/mock-hand";
 
 const strokeCount = (page: Page) => page.evaluate(() => window.__airDraw.strokes.length);
 const lastStroke = (page: Page) => page.evaluate(() => window.__airDraw.strokes.at(-1)!);
@@ -20,42 +20,151 @@ async function startDrawing(page: Page, lang = /Español/) {
   await page.waitForTimeout(DRAW_ARM_MS); // the pen is held up briefly after starting
 }
 
-test("gestures: draw, thumb-out guard, double-pinch undo, flick clear, restore", async ({ page }) => {
+test("gestures: pinch to draw, thumb undo / redo, snap to clear", async ({ page }) => {
   const errors = trackErrors(page);
   await startDrawing(page);
 
-  await play(page, "pointTucked"); // 1. point with thumb tucked while moving
+  await play(page, "pinchDraw"); // 1. pinch while moving: a stroke
   expect(await strokeCount(page)).toBe(1);
   expect(await page.evaluate(() => window.__airDraw.strokes[0].pts.length)).toBeGreaterThan(3);
 
-  await play(page, "pointThumbOut"); // 2. thumb out: no new stroke
+  await play(page, "point"); // 2. pointing without a pinch draws nothing
   expect(await strokeCount(page)).toBe(1);
 
-  await play(page, "pointTucked"); // 3. thumb tucked again
+  await play(page, "pinchGlitchy", { forget: false }); // 3. a pinch flicker and a tracking dropout don't break the stroke
   expect(await strokeCount(page)).toBe(2);
+  // the hand has gone, but it is remembered for a moment, still mid-stroke…
+  expect(await page.evaluate(() => window.__airDraw.hands)).toEqual([0, 1]);
+  expect(await page.evaluate(() => window.__airDraw.strokes[1].active)).toBe(true);
+  await forgotten(page); // …then forgotten, which ends the stroke
+  expect(await page.evaluate(() => window.__airDraw.strokes.every(s => !s.active))).toBe(true);
 
-  await play(page, "doublePinch"); // 4. undo
+  await play(page, "thumbLeft"); // 4. 👈 undo (fires once, however long it's held)
   expect(await strokeCount(page)).toBe(1);
   expect(await lastToast(page)).toBe("↩ Undo");
   await expect(page.getByTestId("toast")).toHaveText("↩ Undo");
 
-  await play(page, "flick"); // 5. clear
+  await play(page, "thumbRight"); // 5. 👉 redo
+  expect(await strokeCount(page)).toBe(2);
+  expect(await lastToast(page)).toBe("↪ Redo");
+
+  // 6. 🫰 snap to clear: with the microphone on, the snap has to be heard and the hand seen snapping
+  await page.evaluate(() => window.__airDraw.setMic("on"));
+  await page.evaluate(() => window.__airDraw.snapSound()); // a click with no hand in view…
+  await page.waitForTimeout(1000);
+  await play(page, "snap"); // …or a snap that isn't heard…
+  await play(page, "fistOpen", { soundAt: 420 }); // …or a fist opening, with a click: nothing
+  expect(await strokeCount(page)).toBe(2);
+  await play(page, "snap", { soundAt: 430 }); // seen and heard together: cleared
   expect(await strokeCount(page)).toBe(0);
   expect(await lastToast(page)).toBe("✨ Cleared");
 
-  await play(page, "doublePinch"); // 6. undo the clear
-  expect(await strokeCount(page)).toBe(1);
+  await play(page, "thumbLeft"); // 7. undo the clear
+  expect(await strokeCount(page)).toBe(2);
   expect(await lastToast(page)).toBe("↩ Restored");
 
-  await page.keyboard.press("c"); // keyboard fallbacks
+  // 7b. the snap itself is often a blur: set up for a snap + the sound is enough
+  await play(page, "snapBlurred", { soundAt: 450 });
+  expect(await strokeCount(page)).toBe(0);
+  await play(page, "thumbLeft");
+  expect(await strokeCount(page)).toBe(2);
+
+  // 8. without a microphone a snap that is seen is enough; a fist opening is not a snap
+  await page.evaluate(() => window.__airDraw.setMic("off"));
+  await play(page, "fistOpen");
+  expect(await strokeCount(page)).toBe(2);
+  await play(page, "snap");
+  expect(await strokeCount(page)).toBe(0);
+
+  await page.keyboard.press("z"); // keyboard fallbacks
+  expect(await strokeCount(page)).toBe(2);
+  await page.keyboard.press("c");
   expect(await strokeCount(page)).toBe(0);
   await page.keyboard.press("z");
-  expect(await strokeCount(page)).toBe(1);
+  await page.keyboard.press("y");
+  expect(await strokeCount(page)).toBe(0);
 
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual(
-    ["↩ Undo", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored"]);
+    ["↩ Undo", "↪ Redo", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "↪ Redo"]);
   expect(errors).toEqual([]);
+});
+
+test("clapping clears too, by sight alone", async ({ page }) => {
+  const errors = trackErrors(page);
+  await startDrawing(page);
+  await play(page, "pinchDraw");
+  expect(await strokeCount(page)).toBe(1);
+
+  for (const mic of ["on", "off"] as const) { // the microphone makes no difference to a clap
+    await page.evaluate(m => window.__airDraw.setMic(m), mic);
+    await play(page, "handsMeet"); // two open hands drifting together slowly…
+    await play(page, "fistBump"); // …or two fists knocked together: nothing
+    expect(await strokeCount(page)).toBe(1);
+    await play(page, "clap"); // two open hands brought together fast: cleared
+    expect(await strokeCount(page)).toBe(0);
+    expect(await lastToast(page)).toBe("✨ Cleared");
+    await play(page, "thumbLeft"); // undo the clear
+    expect(await strokeCount(page)).toBe(1);
+    expect(await lastToast(page)).toBe("↩ Restored");
+  }
+
+  // hands that meet often blur or merge into one: closing fast, then lost, is enough
+  await play(page, "clapBlurred");
+  expect(await strokeCount(page)).toBe(0);
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("the pen follows the pinch closely: open fingers stop drawing, a pad pinch draws", async ({ page }) => {
+  await startDrawing(page);
+  const vw = await page.evaluate(() => document.querySelector("video")!.videoWidth);
+  // pinched for the first 400 ms of a 900 ms sweep, then fingers ~1.5 cm apart for the rest
+  await play(page, "pinchThenOpen");
+  expect(await strokeCount(page)).toBe(1);
+  const xs = (await lastStroke(page)).pts.map(p => p[0]);
+  const span = (Math.max(...xs) - Math.min(...xs)) / vw;
+  expect(span).toBeGreaterThan(0.04); // drew while pinched (≈ 0.09 of the frame)…
+  expect(span).toBeLessThan(0.13); // …and stopped once the fingers opened (the whole sweep is 0.2)
+
+  await play(page, "pinchPad"); // thumb on the pad of the index fingertip, not tip to tip
+  expect(await strokeCount(page)).toBe(2);
+});
+
+test("moving the hand around doesn't draw by accident", async ({ page }) => {
+  await startDrawing(page);
+  await play(page, "pinchBrush"); // thumb brushes the fingertip for a moment
+  await play(page, "pinchFast"); // a fast sweep with the fingertips together
+  await play(page, "thumbSide"); // a relaxed hand: thumb against the side of the index finger
+  await play(page, "point"); // pointing
+  expect(await strokeCount(page)).toBe(0);
+  await play(page, "drawThenThumb"); // closing the hand after a stroke, thumb out: no 👉 redo / 👈 undo
+  expect(await strokeCount(page)).toBe(1);
+  expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual([]);
+  await page.keyboard.press("z");
+  expect(await strokeCount(page)).toBe(0);
+  await play(page, "pinchDraw"); // a real pinch still draws, from where it started
+  expect(await strokeCount(page)).toBe(1);
+  const xs = (await lastStroke(page)).pts.map(p => p[0]);
+  const vw = await page.evaluate(() => document.querySelector("video")!.videoWidth);
+  expect((Math.max(...xs) - Math.min(...xs)) / vw).toBeGreaterThan(0.08); // nearly the whole 0.1 sweep
+});
+
+test("two hands can draw at once; pinching both together makes a line instead", async ({ page }) => {
+  await startDrawing(page);
+  await play(page, "twoPinchDraw");
+  expect(await strokeCount(page)).toBe(2);
+  expect(await page.evaluate(() => window.__airDraw.strokes.map(s => s.shape ?? "ink"))).toEqual(["ink", "ink"]);
+
+  await play(page, "line");
+  expect(await strokeCount(page)).toBe(3); // no ink from the pinches, just the line
+  expect(await lastStroke(page)).toMatchObject({ shape: "line" });
+
+  await play(page, "lineStaggered"); // pinch one hand, then the other later, holding still: also a line
+  expect(await strokeCount(page)).toBe(4);
+  const s = await lastStroke(page);
+  expect(s).toMatchObject({ shape: "line" });
+  expect(Math.abs(s.pts[1][0] - s.pts[0][0])).toBeGreaterThan(200); // stretched out
 });
 
 test("colour wheel and two-hand shapes", async ({ page }) => {
@@ -71,7 +180,7 @@ test("colour wheel and two-hand shapes", async ({ page }) => {
   expect(await page.evaluate(() => window.__airDraw.wheel)).toBeNull();
   expect(await strokeCount(page)).toBe(0); // no ink while choosing
 
-  await play(page, "pointTucked"); // new ink uses the picked colour
+  await play(page, "pinchDraw"); // new ink uses the picked colour
   expect(await lastStroke(page)).toMatchObject({ color: coral.color });
 
   await play(page, "line");
@@ -84,16 +193,25 @@ test("colour wheel and two-hand shapes", async ({ page }) => {
   s = await lastStroke(page);
   expect(s).toMatchObject({ shape: "rect" });
   expect(s.pts).toHaveLength(4);
+  // corners are where each L's thumb and index lines meet (30 / 33 units in from the wrist), not the fingertips
+  const [vw, vh] = await page.evaluate(() => [document.querySelector("video")!.videoWidth, document.querySelector("video")!.videoHeight]);
+  const k = vh / 720;
+  const near = (p: [number, number], x: number, y: number) => Math.hypot(p[0] - x, p[1] - y) < 12 * k + 2;
+  expect(near(s.pts[0], 0.25 * vw + 30 * k, 0.85 * vh - 33 * k)).toBe(true);
+  expect(near(s.pts[2], 0.75 * vw - 30 * k, 0.55 * vh - 33 * k)).toBe(true);
 
-  await play(page, "tri");
+  await play(page, "circle");
   s = await lastStroke(page);
-  expect(s).toMatchObject({ shape: "tri" });
-  expect(s.pts).toHaveLength(3);
-  expect(s.pts[2][1]).toBeLessThan(s.pts[0][1]); // apex above the base
-  expect(Math.abs(s.pts[1][0] - s.pts[0][0])).toBeGreaterThan(200); // grew as the hands parted
+  expect(s).toMatchObject({ shape: "circle" });
+  expect(s.pts.length).toBeGreaterThan(30);
+  const xs = s.pts.map(p => p[0]), ys = s.pts.map(p => p[1]);
+  const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+  expect(w).toBeGreaterThan(300 * k); // grew as the hands parted (each hand's curve ends up ~190 units from the middle)
+  expect(Math.abs(w - h)).toBeLessThan(4); // round
+  expect(Math.abs((Math.max(...xs) + Math.min(...xs)) / 2 - vw / 2)).toBeLessThan(6); // centred between the hands
 
   expect(await strokeCount(page)).toBe(4);
-  expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual([`🎨 ${coral.name}`]); // shape releases aren't undo taps
+  expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual([`🎨 ${coral.name}`]); // shape releases aren't undo / clear
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -103,31 +221,46 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await page.addInitScript(installMock);
   await page.goto("/");
 
-  const french = langButton(page, /Français/);
-  await expect(french).toBeEnabled();
+  const ukrainian = langButton(page, /Українська/);
+  await expect(ukrainian).toBeEnabled();
   await page.waitForFunction(() => window.__detectCalls > 3); // menu-mode tracking is running
   await expect(page.getByRole("button", { name: /Start/ })).toHaveCount(0); // no separate Start button
 
-  // hover French: a French flag is painted in next to the finger, then the drawing page opens
+  // hover Ukrainian: a Ukrainian flag is painted in next to the finger, then the drawing page opens
   const cursor = page.getByTestId("hand-cursor");
-  await hoverHand(page, french, 1700);
+  await hoverHand(page, ukrainian, 1700);
   await expect(cursor).toHaveAttribute("data-state", "dwell");
-  await expect(cursor).toHaveAttribute("data-flag", "fr");
+  await expect(cursor).toHaveAttribute("data-flag", "uk");
   await expect(page.getByTestId("hand-cursor-flag")).toBeVisible();
-  await expect(french).toHaveAttribute("data-hand-hover", "");
+  await expect(ukrainian).toHaveAttribute("data-hand-hover", "");
   await expect(page.getByTestId("start-screen")).toBeHidden();
   const card = page.getByTestId("word-card");
-  await expect(card).toHaveAttribute("data-lang", "fr");
-  await expect(card).toContainText("Français");
+  await expect(card).toHaveAttribute("data-lang", "uk");
   // the gesture cheat-sheet is open when the drawing page opens
   await expect(page.getByTestId("gesture-hints")).toHaveAttribute("data-open", "true");
-  await expect(page.getByTestId("gesture-hints")).toContainText("pinch twice quickly");
+  await expect(page.getByTestId("gesture-hints")).toContainText("clap your hands");
+  await expect(page.getByTestId("gesture-hints")).toContainText("snap your fingers");
   await page.waitForFunction(() => window.__sceneDone);
   // the finger that picked was still pointing, but the pen stays up for a moment
   expect(await strokeCount(page)).toBe(0);
 
-  // back button, pressed by hand (the cursor only shows up over it)
+  // the cheat-sheet's × and the "How to draw ?" pill are pressed by hand too
+  const hints = page.getByTestId("gesture-hints");
+  await hoverHand(page, page.getByRole("button", { name: "Hide hints" }), 1700);
+  await expect(hints).toHaveAttribute("data-open", "false");
+  await page.waitForFunction(() => window.__sceneDone);
+  await hoverHand(page, page.getByRole("button", { name: "How to draw ?" }), 1700);
+  await expect(hints).toHaveAttribute("data-open", "true");
+  await page.waitForFunction(() => window.__sceneDone);
+
+  // drawing (pinching) across the back button doesn't press it
   const back = page.getByRole("button", { name: "Back to languages" });
+  await hoverHand(page, back, 1700, { pinch: true });
+  await page.waitForFunction(() => window.__sceneDone);
+  await expect(page.getByTestId("start-screen")).toBeHidden();
+  await expect(cursor).toHaveAttribute("data-state", "hidden");
+
+  // back button, pressed by hand (the cursor only shows up over it)
   await hoverHand(page, back, 1700);
   await expect(cursor).toHaveAttribute("data-state", "dwell");
   await expect(cursor).not.toHaveAttribute("data-flag");
@@ -135,8 +268,8 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await page.waitForFunction(() => window.__sceneDone);
 
   // mouse works too; Esc goes back
-  await langButton(page, /Deutsch/).click();
-  await expect(card).toHaveAttribute("data-lang", "de");
+  await langButton(page, /Polski/).click();
+  await expect(card).toHaveAttribute("data-lang", "pl");
   expect(await strokeCount(page)).toBe(0); // fresh canvas for the new card
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("start-screen")).toBeVisible();
