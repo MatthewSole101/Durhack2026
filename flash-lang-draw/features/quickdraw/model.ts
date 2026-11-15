@@ -3,12 +3,12 @@
 // memory, outside the JS garbage collector, so everything created here is deleted explicitly.
 
 import type { CompiledModel } from "@litertjs/core";
-import { LABELS_URL, MIN_MODEL_BYTES, MODEL_NAME, MODEL_URL, TOP_K } from "./constants";
+import { LABELS_URL, MIN_MODEL_BYTES, MODEL_NAME, MODEL_URL } from "./constants";
 import { fixBatchSize } from "./flatbuffer";
+import { createRanker, type Guess } from "./guesses";
 import { BUILTIN_LABELS, parseLabels, type LabelSource } from "./labels";
 import { loadRuntime } from "./runtime";
 
-export type Guess = { label: string; prob: number };
 export type LoadStage = "runtime" | "compiling";
 
 export type QuickDrawModel = {
@@ -17,9 +17,12 @@ export type QuickDrawModel = {
   dtype: string;
   labels: readonly string[];
   labelSource: LabelSource;
-  /** Top guesses for one 28×28 input, best first. Calls must not overlap (see predictor.ts). */
+  /**
+   * Top guesses for one 28×28 input, best first: flashcard words only, re-normalised among
+   * themselves (see guesses.ts). Calls must not overlap (see predictor.ts).
+   */
   predict: (input: Float32Array) => Promise<Guess[]>;
-  /** Raw class probabilities for one input, in label order. */
+  /** Raw class probabilities for one input: all 345 classes, in label order, nothing pruned. */
   probabilities: (input: Float32Array) => Promise<Float32Array>;
   dispose: () => void;
 };
@@ -62,14 +65,6 @@ export function toProbabilities(out: Float32Array): Float32Array {
   return exp.map(v => v / total);
 }
 
-/** The k most likely classes, best first. With `keep`, only the classes it accepts are ranked. */
-export function topK(probs: ArrayLike<number>, labels: readonly string[], k = TOP_K, keep?: (label: string) => boolean): Guess[] {
-  const all = Array.from(probs, (prob, i) => ({ label: labels[i] ?? `class ${i}`, prob }));
-  return (keep ? all.filter(g => keep(g.label)) : all)
-    .sort((a, b) => b.prob - a.prob)
-    .slice(0, k);
-}
-
 export async function loadQuickDrawModel(onStage?: (stage: LoadStage) => void): Promise<QuickDrawModel> {
   onStage?.("runtime");
   const [core, original, { labels, labelSource }] = await Promise.all([loadRuntime(), fetchModelBytes(), fetchLabels()]);
@@ -84,6 +79,7 @@ export async function loadQuickDrawModel(onStage?: (stage: LoadStage) => void): 
     throw new Error(`Unsupported model (input dtype ${details?.dtype}): only ${MODEL_NAME} (float32 input) is supported.`);
   }
   const inputShape = Array.from(details.shape); // [1, 28, 28, 1] once the batch size is patched
+  const rank = createRanker(labels); // output index i ↔ labels[i]
 
   let disposed = false;
   let inflight: Promise<unknown> | null = null;
@@ -115,7 +111,7 @@ export async function loadQuickDrawModel(onStage?: (stage: LoadStage) => void): 
   return {
     name: MODEL_NAME, inputShape, dtype: details.dtype, labels, labelSource,
     probabilities,
-    predict: async input => topK(await probabilities(input), labels),
+    predict: async input => rank(await probabilities(input)),
     dispose() {
       if (disposed) return;
       disposed = true;

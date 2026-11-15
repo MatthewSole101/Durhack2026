@@ -34,7 +34,7 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 
 | Gesture | What it does |
 |---|---|
-| 🤏 Pinch thumb and index together, then move | Draw |
+| 🤏 Pinch thumb and index together, then move | Draw (opening the fingers, or closing the hand into a fist, stops) |
 | 👈 Fist with the thumb pointing left | Undo |
 | 👉 Fist with the thumb pointing right | Redo |
 | 👏 Clap your hands (two open hands brought together quickly), or 🫰 snap your fingers | Clear |
@@ -47,7 +47,7 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 ### Keys
 
 `C` clear · `Z` undo · `Shift+Z` / `Y` redo · `N` skip the word · `Esc` back to languages · `H` show/hide the gesture
-hints · `D` show/hide the debug panel (the model's top-5 guesses, the 28×28 image it is
+hints · `D` show/hide the debug panel (the top-5 guesses with their percentages, the 28×28 image the model is
 actually fed, and the load status).
 
 ## Where things are
@@ -94,6 +94,7 @@ CPU**. No server calls, nothing from a CDN. Code is in `features/quickdraw/`:
 | `runtime.ts` | One lazily loaded LiteRT instance per page |
 | `flatbuffer.ts` | `fixBatchSize`: the batch-dimension patch |
 | `model.ts` | Fetch, patch, compile, check, `predict()`, `dispose()` |
+| `guesses.ts` | Model output → guesses: prune to the flashcard words, re-normalise, top 5 |
 | `preprocess.ts` | Strokes → `Float32Array(784)` |
 | `predictor.ts` | Throttled, serialised prediction loop |
 | `labels.ts` | The 345 class names and `labels.txt` parsing |
@@ -175,8 +176,10 @@ It only downloads the first few samples of each category (HTTP range requests).
 
 `features/languages/words.ts` holds 214 drawable words in all seven languages. Each word is one
 of the model's 345 Quick Draw classes; the other 131 classes (the Eiffel Tower, squiggle, zebra, …) have
-no entry, so they are never dealt and never listed in the "You drew…" guess feed, which ranks the
-model's guesses among the 214 words only. (The `D` debug panel still shows the model's own top 5.) Each word has a
+no entry, so they are never dealt and never guessed: `features/quickdraw/guesses.ts` drops them
+from the model's output before ranking and re-normalises what is left, so the guesses' percentages
+are shares of the 214 words' probability. That one list drives the win check, the "You drew…"
+feed and the `D` debug panel. Each word has a
 `labels` list (the Quick Draw classes that count as that word) and a `t` object with the word
 in each language, keyed by language code. `features/game/deck.ts` deals every word once,
 shuffled, before any repeats.

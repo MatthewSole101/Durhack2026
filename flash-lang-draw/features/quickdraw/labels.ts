@@ -6,6 +6,13 @@ export const LABEL_COUNT = 345;
 
 export type LabelSource = "labels.txt" | "built-in";
 
+/**
+ * Canonical form of a class label, for lookups: trimmed, lowercase, and any run of spaces,
+ * underscores or hyphens as one space ("Alarm_Clock", " alarm  clock", "alarm-clock" → "alarm clock").
+ * Used wherever a label is matched against the flashcard words — never to rewrite the label list.
+ */
+export const labelKey = (label: string) => label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+
 /** Parse a labels file. Returns null unless it has exactly LABEL_COUNT non-empty lines. */
 export function parseLabels(text: string): string[] | null {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);

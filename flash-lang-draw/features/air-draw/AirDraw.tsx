@@ -10,9 +10,9 @@ import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/featur
 import { loadDoodles, SkipDoodle } from "@/features/game/SkipDoodle";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
-import { wordForLabel, type Word } from "@/features/languages/words";
-import { INPUT_SIZE, TOP_K } from "@/features/quickdraw/constants";
-import { loadQuickDrawModel, topK, type QuickDrawModel } from "@/features/quickdraw/model";
+import type { Word } from "@/features/languages/words";
+import { INPUT_SIZE } from "@/features/quickdraw/constants";
+import { loadQuickDrawModel, type QuickDrawModel } from "@/features/quickdraw/model";
 import { createPredictor, type Prediction, type Predictor } from "@/features/quickdraw/predictor";
 import { createPreprocessor, type Strokes } from "@/features/quickdraw/preprocess";
 import { loadRuntime } from "@/features/quickdraw/runtime";
@@ -21,9 +21,7 @@ import StartScreen from "@/features/start-screen/StartScreen";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const cameraError = (e: unknown) =>
   `Camera unavailable: ${message(e)} — open this page via http://localhost or https.`;
-const NO_PREDICTION: Prediction = { guesses: [], wordGuesses: [], input: null };
-/** The model knows more classes than there are flashcard words; the player only sees the words. */
-const isWord = (label: string) => wordForLabel(label) !== undefined;
+const NO_PREDICTION: Prediction = { guesses: [], input: null };
 
 type Card = { lang: LangCode; word: Word };
 
@@ -165,7 +163,8 @@ export default function AirDraw() {
       if (!current) return; // back on the language list
       setPrediction(p);
       if (hook) hook.prediction = p;
-      if (!won && !skipped && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
+      // won when the word is the top guess (see PREDICT_CONFIDENCE_THRESH for demanding more than that)
+      if (!won && !skipped && isCorrect(current, p.guesses[0]?.label) && p.guesses[0].prob >= PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
         correctSound.currentTime = 0;
@@ -208,10 +207,7 @@ export default function AirDraw() {
         predictor = createPredictor({
           getStrokes: engine.getStrokes,
           toInput: preprocessor.toInput,
-          predict: async input => {
-            const probs = await m.probabilities(input);
-            return { guesses: topK(probs, m.labels), wordGuesses: topK(probs, m.labels, TOP_K, isWord) };
-          },
+          predict: m.predict, // flashcard words only, re-normalised: the one list everything below uses
           onPrediction,
           onError: e => { console.error(e); report({ state: "error", message: message(e) }); },
         });
@@ -311,8 +307,8 @@ export default function AirDraw() {
           {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
 
           <GestureHints mic={mic} />
-          {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup) */}
-          <GuessFeed guesses={prediction.wordGuesses} lang={card.lang} />
+          {/* live top guesses, in the language being learnt */}
+          <GuessFeed guesses={prediction.guesses} lang={card.lang} />
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
         </>
       ) : (

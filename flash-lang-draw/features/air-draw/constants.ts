@@ -27,12 +27,22 @@ export const THUMB_OPEN = 0.7;
 // 🤏 pen: pinch thumb and index together to draw
 // gap = thumb tip ↔ nearest point of the index finger's last segment ÷ palm (fingertips touching ≈ 0.1–0.25)
 export const PINCH_ON = 0.25; // pinched below this (gap to the outer half of the index's last segment)…
-export const PINCH_OFF = 0.45; // …and let go above this (≈ 1–2 cm apart): visibly open fingers don't draw
+export const PINCH_OFF = 0.38; // …and let go above this (≈ 1 cm apart): fingers that have come apart don't draw
 export const PINCH_MIN_INDEX = 0.8; // index extension a pinch needs to start; a fist's thumb rests on a curled index
 export const PINCH_START_SPEED = 4; // a pinch can't start while the pinch point moves faster than this (palm lengths / s): motion blur
 export const PEN_DOWN_MS = 150; // a pinch must last this long to draw (a finger brushing past isn't a pinch); its ink is kept
-export const PEN_UP_MS = 200; // the pen lifts only after the pinch has been open this long; re-pinch sooner and the stroke goes on
+export const PEN_UP_MS = 150; // the pen lifts only after the pinch has been open this long; re-pinch sooner and the stroke goes on
+// How far a finger is folded = fingertip ↔ knuckle distance ÷ the length of the finger's first segment:
+//   straight ≈ 2, bent for a pinch (or to set up a snap) ≈ 1.1–1.5, folded into a fist ≈ 0.6–0.8
+// In a fist the thumb rests on the folded index finger, which looks like a pinch and would keep
+// drawing for as long as the fist is held; and with the thumb across the middle finger a fist
+// looks like a hand set up to snap. A folded finger rules both out.
+export const FOLD_MAX = 0.85; // folded below this
 export const PEN_BRIDGE = 0.2; // after tracking drops mid-stroke, continue the stroke if the pen is back within this × frame width
+
+// A hand has to have been tracked without a break this long before it can clear the drawing (clap,
+// or set up a snap): a face or a sleeve mistaken for a hand flickers in and out.
+export const HAND_SETTLE_MS = 250;
 
 // a hand that drops out of tracking (e.g. partly off-screen) is remembered this long: its stroke,
 // pinch and shape stay alive, and a hand reappearing near it picks them back up
@@ -55,6 +65,8 @@ export const SNAP_RELEASE_MS = 400; // …within this of the last "ready" frame
 export const SNAP_SYNC_MS = 400; // a snap sound counts if the hand let go within this of it…
 export const SNAP_HEARD_MS = 500; // …or was in the ready pose up to this long before it (the snap is often too fast to see)
 export const SNAP_PREP_MS = 60; // without a microphone, the ready pose must be seen this long before letting go
+export const SNAP_AFTER_PINCH_MS = 500; // a hand can't set up a snap straight out of a pinch: it is closing or relaxing after drawing
+export const SNAP_SETUP_MAX_MS = 1500; // a snap that is only heard counts if the hand got ready no longer ago than this (a hand resting in that pose isn't snapping)
 export const SNAP_COOLDOWN_MS = 1000;
 export const SNAP_DISCARD_MS = 800; // ink started this recently came from getting into position: dropped, not kept for undo
 
@@ -65,6 +77,8 @@ export const CLAP_MS = 350; // …within this long, so hands drifting together s
 // hands that meet often merge into one detection or blur away just before they touch:
 export const CLAP_SPEED = 4; // a hand lost while the gap was closing at least this fast (palms / s)…
 export const CLAP_COAST_MS = 150; // …and would have closed within this long also counts
+export const CLAP_CLOSING_MS = 40; // …after closing that fast for at least this long (more than one frame: a detection that jumps isn't a hand moving)
+export const CLAP_ALIKE = 0.6; // both hands look about the same size (smaller palm ÷ larger): they are side by side, one pair of hands
 export const CLAP_COOLDOWN_MS = 1000;
 
 export const TOAST_MS = 900;
@@ -112,4 +126,10 @@ export const ACTION_COOLDOWN_MS = 600; // after a shape or a colour pick: no und
 export const SOLVED_MS = 1600; // how long a solved word stays up before the next one
 export const REVEAL_MS = 3000; // how long a skipped word's English and doodle stay up before the next one
 
-export const PREDICT_CONFIDENCE_THRESH = 0.75; // How confident a prediction has to be to be counted as correct
+// The minimum score the top guess needs to count as correct. 0 = the top guess always counts:
+// whatever is ★ first in the "You drew…" feed is what the round is judged on.
+// Raising it makes the game stricter, but then a word can sit first in the feed and still not be
+// marked correct (the feed shows no percentages) — at 0.75, about 1 in 11 real Quick Draw drawings
+// that were correctly ranked first were turned down, and wobbly air drawings score lower still.
+// The score is a share of the flashcard words' probability (features/quickdraw/guesses.ts).
+export const PREDICT_CONFIDENCE_THRESH = 0;
