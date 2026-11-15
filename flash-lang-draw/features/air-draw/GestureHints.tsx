@@ -57,7 +57,7 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
             </button>
           </div>
           <ul className="flex flex-col gap-1">
-            <Hint icon="🤏" title="Draw">pinch thumb and index together, then move</Hint>
+            <Hint icon="🤏" title="Draw">pinch thumb and index together, then move; open or close your hand to stop</Hint>
             <Hint icon="👈" title="Undo">fist, thumb pointing left</Hint>
             <Hint icon="👉" title="Redo">fist, thumb pointing right</Hint>
             <Hint icon="👏" title="Clear">clap your hands, or 🫰 snap your fingers</Hint>

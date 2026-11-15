@@ -3,23 +3,19 @@
 // Inference is serialised: if a prediction is running, one more is queued for when it finishes.
 
 import { PREDICT_THROTTLE_MS } from "./constants";
-import type { Guess } from "./model";
+import type { Guess } from "./guesses";
 import type { Strokes } from "./preprocess";
 
-/** What one inference yields. Probabilities are the model's own in both lists (not renormalised). */
-export type Guesses = {
-  /** the model's top guesses over all of its classes */
-  guesses: Guess[];
-  /** its top guesses among the flashcard words only: what the player is shown */
-  wordGuesses: Guess[];
-};
-export type Prediction = Guesses & { input: Float32Array | null };
-const NO_GUESSES: Guesses = { guesses: [], wordGuesses: [] };
+/**
+ * What one inference yields: the top guesses among the flashcard words (see guesses.ts), and the
+ * exact 28×28 image they were made from. The one list feeds the win check, the feed and the debug panel.
+ */
+export type Prediction = { guesses: Guess[]; input: Float32Array | null };
 
 export type PredictorOptions = {
   getStrokes: () => Strokes;
   toInput: (strokes: Strokes) => Float32Array | null;
-  predict: (input: Float32Array) => Promise<Guesses>;
+  predict: (input: Float32Array) => Promise<Guess[]>;
   onPrediction: (p: Prediction) => void;
   onError: (e: unknown) => void;
 };
@@ -51,8 +47,8 @@ export function createPredictor({ getStrokes, toInput, predict, onPrediction, on
         const gen = generation;
         const input = toInput(getStrokes());
         // empty canvas: no inference, just clear the guesses
-        const result = input ? await predict(input) : NO_GUESSES;
-        if (!stopped && gen === generation) onPrediction({ ...result, input });
+        const guesses = input ? await predict(input) : [];
+        if (!stopped && gen === generation) onPrediction({ guesses, input });
       } while (again && !stopped);
     } catch (e) {
       if (!stopped) onError(e);

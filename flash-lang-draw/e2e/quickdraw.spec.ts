@@ -3,15 +3,21 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS } from "../features/air-draw/constants";
 import { createDeck, isCorrect } from "../features/game/deck";
+import { hintLetters, maskWord } from "../features/game/hint";
 import { LANGUAGES } from "../features/languages/languages";
-import { WORDS, wordForLabel, type Word } from "../features/languages/words";
+import { translate, WORDS, wordForLabel, type Word } from "../features/languages/words";
 import { fixBatchSize } from "../features/quickdraw/flatbuffer";
-import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
-import { toProbabilities, topK } from "../features/quickdraw/model";
+import { createRanker } from "../features/quickdraw/guesses";
+import { BUILTIN_LABELS, labelKey, parseLabels } from "../features/quickdraw/labels";
+import { toProbabilities } from "../features/quickdraw/model";
 import { installMock, langButton, play, testWord, trackErrors } from "./support/mock-hand";
 
-/** Is this Quick Draw class one of the flashcard words? (The same rule the game uses for the guess feed.) */
+/** Is this Quick Draw class one of the flashcard words? (The same rule the game uses to prune its guesses.) */
 const isWord = (label: string) => wordForLabel(label) !== undefined;
+/** The model's own top classes over all 345, nothing pruned: what the game used to rank on. */
+const rawTop = (probs: ArrayLike<number>, k = 5) =>
+  Array.from(probs, (prob, i) => ({ label: BUILTIN_LABELS[i], prob })).sort((a, b) => b.prob - a.prob).slice(0, k);
+const total = (guesses: { prob: number }[]) => guesses.reduce((sum, g) => sum + g.prob, 0);
 
 // ---------------------------------------------------------------------------------------------
 // Pure logic (runs in Node)
@@ -169,9 +175,68 @@ test.describe("labels and scoring", () => {
     expect(alarm.en).toBe("alarm clock");
     expect(alarm.t.es).toBe("el despertador");
     expect(alarm.t.ja).toBe("めざましどけい");
-    // labels the dictionary doesn't cover fall back to undefined (the feed shows the raw label)
+    // classes that are not flashcard words have no entry (they are pruned before ranking)
     expect(wordForLabel("squiggle")).toBeUndefined();
     expect(wordForLabel("The Eiffel Tower")).toBeUndefined();
+  });
+
+  test("labels are matched in canonical form: case, spacing, underscores and hyphens don't matter", () => {
+    expect(labelKey("  Alarm_Clock ")).toBe("alarm clock");
+    expect(labelKey("alarm   clock")).toBe("alarm clock");
+    expect(labelKey("T-Shirt")).toBe("t shirt");
+    // no two of the model's 345 classes collapse into one key
+    expect(new Set(BUILTIN_LABELS.map(labelKey)).size).toBe(BUILTIN_LABELS.length);
+    const alarm = wordForLabel("alarm clock")!, tshirt = wordForLabel("t-shirt")!;
+    for (const variant of ["alarm_clock", "Alarm Clock", " alarm  clock ", "ALARM-CLOCK"]) expect(wordForLabel(variant), variant).toBe(alarm);
+    for (const variant of ["t_shirt", "T-Shirt", "t shirt"]) expect(wordForLabel(variant), variant).toBe(tshirt);
+    expect(isCorrect(alarm, "alarm_clock")).toBe(true); // the win check uses the same form
+    expect(isCorrect(alarm, "Alarm Clock")).toBe(true);
+    expect(isCorrect(alarm, "clock")).toBe(false);
+    // a label list written another way still finds all 214 words, at the same indices
+    const underscored = BUILTIN_LABELS.map(l => l.replace(/ /g, "_").toUpperCase());
+    const ranked = createRanker(underscored)(BUILTIN_LABELS.map(() => 1), 345);
+    expect(ranked).toHaveLength(WORDS.length);
+    for (const g of ranked) expect(g.word, g.label).toBe(wordForLabel(BUILTIN_LABELS[underscored.indexOf(g.label)]));
+  });
+
+  test("every flashcard word resolves to a translation in every language, never falling back to English", () => {
+    const warnings: unknown[][] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      // through the same path the feed takes: model label → guess → its word → translate()
+      const guesses = createRanker(BUILTIN_LABELS)(BUILTIN_LABELS.map(() => 1), 345);
+      expect(guesses).toHaveLength(WORDS.length); // every subset word has a model class (no warning about a missing one)
+      for (const g of guesses) for (const l of LANGUAGES) expect(translate(g.word, l.code), `${g.label}.${l.code}`).toBe(g.word.t[l.code]);
+      expect(warnings).toEqual([]);
+
+      // a word that lost a translation falls back to English, and says so (once) in dev
+      const broken = { ...testWord("ghost", "ghost"), en: "ghost (English)" };
+      (broken.t as Record<string, string>).ja = " ";
+      expect(translate(broken, "es")).toBe("ghost");
+      expect(translate(broken, "ja")).toBe("ghost (English)");
+      expect(translate(broken, "ja")).toBe("ghost (English)");
+      expect(warnings).toHaveLength(1);
+      expect(String(warnings[0][0])).toContain('No "ja" translation for the word "ghost"');
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  test("a hint shows 2–3 random letters of the word and stars out the rest", () => {
+    const shown = (hint: string) => [...hint].filter(c => /\p{L}/u.test(c)).length; // letters left readable
+    for (const [word, n] of [["word", 2], ["bucket", 2], ["backpack", 3], ["bed", 1], ["alarm clock", 3]] as const) {
+      const hint = maskWord(word);
+      expect(hint, word).toHaveLength(word.length);
+      expect(shown(hint), word).toBe(n);
+      [...hint].forEach((c, i) => expect(c === "*" || c === word[i], `${word} → ${hint}`).toBe(true)); // letters stay in place
+    }
+    expect(maskWord("alarm clock")[5]).toBe(" "); // spaces and hyphens are kept, not starred or counted
+    expect(maskWord("t-shirt")[1]).toBe("-");
+    expect(maskWord("word", () => 0)).toBe("wo**"); // which letters is up to the random source…
+    expect(maskWord("word", () => 0.999)).toBe("w**d");
+    expect(new Set(Array.from({ length: 60 }, () => maskWord("backpack"))).size).toBeGreaterThan(3); // …so hints vary
+    for (const w of WORDS) expect(shown(maskWord(w.en)), w.en).toBe(hintLetters(w.en.replace(/[^\p{L}]/gu, "").length));
   });
 
   test("the deck deals every word once before repeating", () => {
@@ -189,15 +254,12 @@ test.describe("labels and scoring", () => {
     expect(parseLabels([...BUILTIN_LABELS, "extra"].join("\n"))).toBeNull();
   });
 
-  test("softmax safety net and top-k", () => {
+  test("softmax safety net", () => {
     const probs = new Float32Array([0.1, 0.6, 0.3]);
     expect(toProbabilities(probs)).toBe(probs); // already probabilities: untouched
     const fromLogits = toProbabilities(new Float32Array([-1, 2, 0]));
     expect(fromLogits.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
     expect(fromLogits[1]).toBeGreaterThan(fromLogits[2]);
-    expect(topK(probs, ["a", "b", "c"], 2)).toEqual([{ label: "b", prob: probs[1] }, { label: "c", prob: probs[2] }]);
-    // ranking a subset: rejected classes are skipped, the probabilities are still the model's own
-    expect(topK(probs, ["a", "b", "c"], 2, l => l !== "b")).toEqual([{ label: "c", prob: probs[2] }, { label: "a", prob: probs[0] }]);
   });
 
   test("every flashcard word has a Quick Draw doodle to show when it is skipped", () => {
@@ -212,17 +274,37 @@ test.describe("labels and scoring", () => {
     }
   });
 
-  test("the guesses shown to the player are ranked among the flashcard words only", () => {
-    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 214 words; the other 131 classes are never shown
+  test("guesses are pruned to the flashcard words, then re-normalised, then cut to the top k", () => {
+    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 214 words; the other 131 classes are never guessed
+    const rank = createRanker(BUILTIN_LABELS);
     // a drawing the model mostly takes for things that are not flashcard words
     const probs = BUILTIN_LABELS.map(() => 0);
     const likely = { squiggle: 0.4, "The Eiffel Tower": 0.2, line: 0.15, zigzag: 0.1, snake: 0.06, river: 0.04, rain: 0.03, grass: 0.02 };
     for (const [label, p] of Object.entries(likely)) probs[BUILTIN_LABELS.indexOf(label)] = p;
-    expect(topK(probs, BUILTIN_LABELS).map(g => g.label)).toEqual(["squiggle", "The Eiffel Tower", "line", "zigzag", "snake"]);
-    expect(topK(probs, BUILTIN_LABELS, 5, isWord)).toEqual([
-      { label: "line", prob: 0.15 }, { label: "snake", prob: 0.06 }, { label: "river", prob: 0.04 },
-      { label: "rain", prob: 0.03 }, { label: "grass", prob: 0.02 },
-    ]);
+    expect(rawTop(probs).map(g => g.label)).toEqual(["squiggle", "The Eiffel Tower", "line", "zigzag", "snake"]);
+
+    // squiggle, The Eiffel Tower and zigzag are pruned before ranking; 0.30 of the mass survives and becomes 1
+    const top = rank(probs);
+    expect(top.map(g => g.label)).toEqual(["line", "snake", "river", "rain", "grass"]);
+    [0.15, 0.06, 0.04, 0.03, 0.02].forEach((raw, i) => expect(top[i].prob).toBeCloseTo(raw / 0.3, 10));
+    expect(total(top)).toBeCloseTo(1, 10);
+    for (const g of top) expect(g.word, g.label).toBe(wordForLabel(g.label)); // each guess carries its dictionary entry
+    expect(rank(probs, 2).map(g => g.label)).toEqual(["line", "snake"]);
+
+    // the whole surviving distribution sums to 1, whatever share of the model's mass it had
+    const uneven = BUILTIN_LABELS.map((_, i) => (i % 7) + 1);
+    const all = rank(uneven, 345);
+    expect(all).toHaveLength(WORDS.length);
+    expect(total(all)).toBeCloseTo(1, 10);
+    for (const g of all) expect(isWord(g.label), g.label).toBe(true);
+    for (let i = 1; i < all.length; i++) expect(all[i - 1].prob).toBeGreaterThanOrEqual(all[i].prob); // best first
+    // the output index still means labels[i]: a class keeps its own score, divided by the surviving mass
+    const mass = BUILTIN_LABELS.reduce((sum, l, i) => sum + (isWord(l) ? uneven[i] : 0), 0);
+    for (const g of all) expect(g.prob).toBeCloseTo(uneven[BUILTIN_LABELS.indexOf(g.label)] / mass, 10);
+
+    // no mass on any flashcard word (or a broken output): no guesses, rather than a division by zero
+    expect(rank(BUILTIN_LABELS.map(l => (isWord(l) ? 0 : 1 / 131)))).toEqual([]);
+    expect(rank(BUILTIN_LABELS.map(() => NaN))).toEqual([]);
   });
 });
 
@@ -382,6 +464,30 @@ test.describe("game", () => {
     expect(errors).toEqual([]);
   });
 
+  test("the round is won whenever the word is the top guess, however sure the model is", async ({ page }) => {
+    await startGame(page, [testWord("camera", "camera"), testWord("zebra", "zebra")]);
+    const card = page.getByTestId("word-card");
+
+    await play(page, "circle");
+    await page.waitForFunction(() => window.__quickDraw.prediction.guesses[0]?.label === "circle");
+    await expect(card).toHaveAttribute("data-solved", "false"); // a circle alone is a "circle", not a camera
+
+    // a rectangle over it: "camera" is now the top guess, but the model is only about a third sure
+    // (pillow, belt, flashlight… share the rest)
+    await play(page, "rect");
+    const top = await (await page.waitForFunction(() => {
+      const g = window.__quickDraw.prediction.guesses[0];
+      return g?.label === "camera" ? g.prob : false;
+    })).jsonValue() as number;
+    expect(top).toBeGreaterThan(0.2);
+    expect(top).toBeLessThan(0.5);
+    await expect(page.getByTestId("guess-feed-item").first()).toHaveAttribute("data-label", "camera"); // ★ in the feed…
+    await expect(card).toHaveAttribute("data-solved", "true"); // …so it is correct
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Correct!");
+    await expect(page.getByTestId("word")).toHaveText("zebra", { timeout: 5_000 });
+    expect(await page.evaluate(() => window.__quickDraw.rounds)).toEqual(["camera", "zebra"]);
+  });
+
   test("guesses follow the drawing: top 5 with percentages, cleared with the canvas, skip moves on", async ({ page }) => {
     // the first word is Spanish with a different English, so the reveal can be told apart from the word
     await startGame(page, [{ ...testWord("cat", "cat"), t: { ...testWord("cat").t, es: "el gato" } }, testWord("line", "line"), testWord("zebra", "zebra")]);
@@ -480,12 +586,22 @@ test.describe("game", () => {
     await play(page, "pinchDraw");
     await expect(items).toHaveCount(5);
     const shown = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
-    // only flashcard words are listed: the best five of them, by the model's own probabilities
+    // only flashcard words are listed: the best five of them, re-normalised among the 214
     for (const label of shown) expect(isWord(label), label).toBe(true);
     const probs = await page.evaluate(() => window.__quickDraw.probabilities(Array.from(window.__quickDraw.prediction.input!)));
-    expect(shown).toEqual(topK(probs, BUILTIN_LABELS, 5, isWord).map(g => g.label));
-    expect(shown).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
-    const topLabel = await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label);
+    const expected = createRanker(BUILTIN_LABELS)(probs);
+    const guesses = await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => ({ label: g.label, prob: g.prob, word: g.word.id })));
+    expect(shown).toEqual(expected.map(g => g.label));
+    expect(guesses.map(g => g.label)).toEqual(shown); // the feed, the win check and the debug panel read one list
+    guesses.forEach((g, i) => expect(g.prob).toBeCloseTo(expected[i].prob, 5));
+    guesses.forEach(g => expect(g.word).toBe(wordForLabel(g.label)!.id));
+    const kept = BUILTIN_LABELS.reduce((sum, l, i) => sum + (isWord(l) ? probs[i] : 0), 0);
+    expect(kept).toBeLessThan(1); // some of the model's mass was on pruned classes…
+    expect(guesses[0].prob).toBeCloseTo(probs[BUILTIN_LABELS.indexOf(guesses[0].label)] / kept, 5); // …and is divided out
+    expect(total(guesses)).toBeLessThanOrEqual(1 + 1e-6);
+    // every guess is rendered in the chosen language
+    for (const [i, g] of expected.entries()) await expect(items.nth(i)).toContainText(g.word.t.es);
+    const topLabel = guesses[0].label;
     const top = items.first();
     await expect(top).toHaveAttribute("data-rank", "1");
     await expect(top).toHaveAttribute("data-label", topLabel); // wired to real inference
@@ -500,17 +616,82 @@ test.describe("game", () => {
     await expect(items).toHaveCount(0);
 
     // a rectangle: two of the model's own top five ("keyboard", "postcard") are not flashcard words.
-    // The feed leaves them out and still lists five words; the debug panel keeps the model's view.
+    // They are pruned before ranking, so nothing downstream ever sees them: not the feed, not the
+    // debug panel. Five words are still listed.
     await play(page, "rect");
     await expect(items).toHaveCount(5);
-    const raw = await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => g.label));
-    expect(raw.filter(l => !isWord(l))).toEqual(["keyboard", "postcard"]);
+    const rectProbs = await page.evaluate(() => window.__quickDraw.probabilities(Array.from(window.__quickDraw.prediction.input!)));
+    expect(rawTop(rectProbs).map(g => g.label).filter(l => !isWord(l))).toEqual(["keyboard", "postcard"]);
     const listed = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
-    expect(listed).not.toContain("keyboard");
-    expect(listed).not.toContain("postcard");
+    expect(listed).toEqual(createRanker(BUILTIN_LABELS)(rectProbs).map(g => g.label));
+    expect(listed).toEqual(await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => g.label)));
     for (const label of listed) expect(isWord(label), label).toBe(true);
-    expect(listed).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
+    for (const [i, label] of listed.entries()) await expect(items.nth(i)).toContainText(wordForLabel(label)!.t.es);
     await page.keyboard.press("d");
-    await expect(page.getByTestId("quickdraw-guesses").getByRole("listitem").nth(raw.indexOf("postcard"))).toContainText("postcard");
+    const debug = page.getByTestId("quickdraw-guesses").getByRole("listitem");
+    await expect(debug).toHaveCount(5);
+    for (const [i, label] of listed.entries()) await expect(debug.nth(i)).toContainText(`${i + 1}. ${label}`);
+    await expect(page.getByTestId("quickdraw-guesses")).not.toContainText("postcard");
+    await expect(page.getByTestId("quickdraw-guesses")).not.toContainText("keyboard");
+  });
+
+  test("the guess feed never shows English: every guess is in the chosen language", async ({ page }) => {
+    const warnings: string[] = [];
+    page.on("console", m => { if (m.type() === "warning") warnings.push(m.text()); });
+    await page.addInitScript(installMock);
+    await page.addInitScript(d => { window.__gameDeck = d; }, [testWord("zebra", "zebra")]);
+    // languages in another script: any Latin letter in the feed would be an English label leaking through
+    for (const [button, code] of [[/日本語/, "ja"], [/తెలుగు/, "te"], [/Українська/, "uk"]] as const) {
+      await page.goto("/");
+      await langButton(page, button).click();
+      await expect(page.getByTestId("start-screen")).toBeHidden();
+      await page.waitForFunction(() => window.__quickDraw.status.state === "ready", null, { timeout: 30_000 });
+      await page.waitForTimeout(DRAW_ARM_MS);
+      const items = page.getByTestId("guess-feed-item");
+      await expect(page.getByTestId("guess-feed")).toHaveAttribute("data-lang", code);
+      for (const scene of ["pinchDraw", "rect", "circle"]) {
+        await play(page, scene);
+        await expect(items).toHaveCount(5);
+        const labels = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+        const texts = await items.evaluateAll(els => els.map(el => el.textContent ?? ""));
+        for (const [i, label] of labels.entries()) {
+          const word = wordForLabel(label);
+          expect(word, label).toBeDefined(); // a flashcard word…
+          expect(texts[i], `${code} ${scene} ${label}`).toContain(word!.t[code]); // …shown as its translation…
+          expect(texts[i], `${code} ${scene} ${label}`).not.toMatch(/[A-Za-z]/); // …with no English in it
+        }
+      }
+    }
+    expect(warnings.filter(w => /translation for the word|no model class/.test(w))).toEqual([]); // no dev fallback warning fired
+  });
+
+  test("the hint box under the card gives a few letters of the word's English", async ({ page }) => {
+    await startGame(page, [testWord("zebra", "zebra"), testWord("cat", "cat")]);
+    const card = page.getByTestId("word-card"), hint = page.getByTestId("hint");
+
+    // same width as the card, right below it, and shorter
+    await expect(hint).toHaveText("Hint?");
+    const c = (await card.boundingBox())!, h = (await hint.boundingBox())!;
+    expect(Math.abs(h.width - c.width)).toBeLessThan(2);
+    expect(h.height).toBeLessThan(c.height * 0.6);
+    expect(h.y).toBeGreaterThan(c.y + c.height - 4);
+    expect(h.y - (c.y + c.height)).toBeLessThan(20);
+
+    // pressing it: 2 of the 5 letters, in place, the rest starred; it stays for the round
+    await hint.click();
+    await expect(hint).toHaveAttribute("data-shown", "true");
+    const text = await page.getByTestId("hint-word").innerText();
+    expect(text).toMatch(/^[zebra*]{5}$/);
+    expect([...text].filter(ch => ch !== "*")).toHaveLength(2);
+    [...text].forEach((ch, i) => expect(ch === "*" || ch === "zebra"[i]).toBe(true));
+    expect(Math.abs((await hint.boundingBox())!.width - c.width)).toBeLessThan(2);
+
+    // skipping shows the English itself, so the hint goes; the next word starts with a fresh "Hint?"
+    await page.getByRole("button", { name: /Skip/ }).click();
+    await expect(page.getByTestId("word-english")).toBeVisible();
+    await expect(hint).toHaveCount(0);
+    await page.getByRole("button", { name: "Next →" }).click();
+    await expect(page.getByTestId("word")).toHaveText("cat");
+    await expect(hint).toHaveText("Hint?");
   });
 });

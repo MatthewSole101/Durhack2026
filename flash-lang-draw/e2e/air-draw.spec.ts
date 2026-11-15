@@ -17,6 +17,9 @@ async function startDrawing(page: Page, lang = /Español/) {
   await btn.click();
   await expect(page.getByTestId("start-screen")).toBeHidden();
   await page.waitForFunction(() => window.__detectCalls > 3);
+  // The doodle classifier compiles on the main thread while the page loads; with the mock hand
+  // tracker the game is reachable before that is done, and a scene played meanwhile loses frames.
+  await page.waitForFunction(() => window.__quickDraw.status.state === "ready", null, { timeout: 30_000 });
   await page.waitForTimeout(DRAW_ARM_MS); // the pen is held up briefly after starting
 }
 
@@ -57,7 +60,7 @@ test("gestures: pinch to draw, thumb undo / redo, snap to clear", async ({ page 
   expect(await strokeCount(page)).toBe(2);
   await play(page, "snap", { soundAt: 430 }); // seen and heard together: cleared
   expect(await strokeCount(page)).toBe(0);
-  expect(await lastToast(page)).toBe("✨ Cleared");
+  expect(await lastToast(page)).toBe("🫰 Cleared"); // the toast says what cleared it
 
   await play(page, "thumbLeft"); // 7. undo the clear
   expect(await strokeCount(page)).toBe(2);
@@ -86,7 +89,7 @@ test("gestures: pinch to draw, thumb undo / redo, snap to clear", async ({ page 
 
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual(
-    ["↩ Undo", "↪ Redo", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "↪ Redo"]);
+    ["↩ Undo", "↪ Redo", "🫰 Cleared", "↩ Restored", "🫰 Cleared", "↩ Restored", "🫰 Cleared", "↩ Restored", "✨ Cleared", "↩ Restored", "↪ Redo"]);
   expect(errors).toEqual([]);
 });
 
@@ -103,7 +106,7 @@ test("clapping clears too, by sight alone", async ({ page }) => {
     expect(await strokeCount(page)).toBe(1);
     await play(page, "clap"); // two open hands brought together fast: cleared
     expect(await strokeCount(page)).toBe(0);
-    expect(await lastToast(page)).toBe("✨ Cleared");
+    expect(await lastToast(page)).toBe("👏 Cleared");
     await play(page, "thumbLeft"); // undo the clear
     expect(await strokeCount(page)).toBe(1);
     expect(await lastToast(page)).toBe("↩ Restored");
@@ -112,6 +115,40 @@ test("clapping clears too, by sight alone", async ({ page }) => {
   // hands that meet often blur or merge into one: closing fast, then lost, is enough
   await play(page, "clapBlurred");
   expect(await strokeCount(page)).toBe(0);
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("closing the hand stops the pen, and nothing clears the drawing by accident", async ({ page }) => {
+  const errors = trackErrors(page);
+  await startDrawing(page);
+  const vw = await page.evaluate(() => document.querySelector("video")!.videoWidth);
+
+  // 1. a stroke (0.1 of the frame wide), then the hand closes into a fist — thumb resting on the
+  //    folded index finger, which used to read as a pinch — and travels twice as far again
+  await play(page, "pinchThenFist");
+  expect(await strokeCount(page)).toBe(1);
+  const xs = (await lastStroke(page)).pts.map(p => p[0]);
+  const span = (Math.max(...xs) - Math.min(...xs)) / vw;
+  expect(span).toBeGreaterThan(0.07); // what was drawn while pinched is kept…
+  expect(span).toBeLessThan(0.13); // …and the fist drew nothing (0.3 if it had)
+  expect(await page.evaluate(() => window.__airDraw.strokes.every(s => !s.active))).toBe(true);
+
+  // 2. a closed fist at rest, thumb across the middle finger, is not a hand set up to snap:
+  //    a sharp noise in the room doesn't clear the drawing, and neither does taking the fist
+  //    out of view (with no microphone a snap is judged by sight alone)
+  for (const mic of ["on", "off"] as const) {
+    await page.evaluate(m => window.__airDraw.setMic(m), mic);
+    await play(page, "fistRest", { soundAt: 800 });
+    expect(await strokeCount(page), `fist at rest, microphone ${mic}`).toBe(1);
+  }
+
+  // 3. a second "hand" that flickers in beside an open hand, slides towards it and is gone
+  //    (a face or a sleeve mistaken for a hand) is not a clap
+  await play(page, "phantom");
+  expect(await strokeCount(page)).toBe(1);
+
+  expect(await page.evaluate(() => window.__airDraw.toasts)).toEqual([]); // nothing cleared, undone or redone
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
