@@ -3,7 +3,7 @@
 // In-game overlay: the flashcard with the word to draw (top) and an optional debug panel
 // showing what the classifier sees and guesses.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { INPUT_SIZE } from "@/features/quickdraw/constants";
 import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
@@ -21,7 +21,14 @@ export type ClassifierStatus =
  * The word is shown in that language only. Its English appears underneath only once the word
  * has been skipped (`revealed`), so the learner finds out what they didn't know.
  */
-export function WordCard({ word, lang, solved, revealed = false }: { word: Word; lang: LangCode; solved: boolean; revealed?: boolean }) {
+export function WordCard({ word, lang, solved, revealed = false, children }: {
+  word: Word;
+  lang: LangCode;
+  solved: boolean;
+  revealed?: boolean;
+  /** shown under the card (the doodles of a skipped word) */
+  children?: ReactNode;
+}) {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
       <div
@@ -31,7 +38,7 @@ export function WordCard({ word, lang, solved, revealed = false }: { word: Word;
         data-solved={solved}
         data-revealed={revealed}
         role="status"
-        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
+        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] transition-colors duration-200 ${
           solved ? "bg-[#b9efb0]" : revealed ? "bg-[#ffe9a8]" : "bg-[#fffdf5]"
         }`}
       >
@@ -49,6 +56,7 @@ export function WordCard({ word, lang, solved, revealed = false }: { word: Word;
           </div>
         )}
       </div>
+      {children}
     </div>
   );
 }

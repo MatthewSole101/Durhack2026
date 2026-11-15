@@ -33,6 +33,8 @@ export default function StartScreen({ stream, modelReady, busy, status, lang, on
   /** the opening paper has been torn away (or was already, on a later visit) */
   const [revealed, setRevealed] = useState(false);
   const reveal = useCallback(() => setRevealed(true), []);
+  /** the intro text has finished writing itself in */
+  const [introDone, setIntroDone] = useState(false);
   const langTag = lang && languageByCode(lang).tag;
 
   // rip the paper off once the camera is showing, or after a while if it never comes
@@ -106,7 +108,7 @@ export default function StartScreen({ stream, modelReady, busy, status, lang, on
         <p className="font-hand mt-1 text-lg text-[#fffdf5]/90 drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]">
           <span className={`lt-write inline-block ${revealed ? "lt-write-go" : ""}`} style={{ animationDelay: "0.5s" }}>
             {modelReady
-              ? "Pick a language to start. No mouse needed: hold your fingertip over one"
+              ? "Pick a language to start. No mouse needed: hold your fingertip over one."
               : "Loading hand tracking…"}
           </span>
         </p>
@@ -121,13 +123,23 @@ export default function StartScreen({ stream, modelReady, busy, status, lang, on
           <figcaption
             className={`lt-write font-hand mt-0.5 text-lg text-[#fffdf5]/75 ${revealed ? "lt-write-go" : ""}`}
             style={{ animationDelay: "2.5s", animationDuration: "0.7s" }}
+            onAnimationEnd={() => setIntroDone(true)}
           >
             — Marjane Satrapi
           </figcaption>
         </figure>
 
-        <div role="status" className="min-h-5 max-w-[560px] rounded-md text-sm text-[#ffb86b] drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
-          {status}
+        {/* writes itself in after the quote; a later message (e.g. a failed retry) writes in straight away */}
+        <div role="status" className="font-hand min-h-5 max-w-[560px] rounded-md text-base text-[#ffb86b] drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">
+          {status && (
+            <span
+              key={status}
+              className={`lt-write inline-block ${revealed ? "lt-write-go" : ""}`}
+              style={{ animationDelay: introDone ? "0s" : "3.2s", animationDuration: "1.2s" }}
+            >
+              {status}
+            </span>
+          )}
         </div>
       </main>
     </div>

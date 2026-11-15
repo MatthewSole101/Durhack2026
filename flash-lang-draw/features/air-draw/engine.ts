@@ -24,7 +24,7 @@ import {
   RECT_HOLD_MS, RECT_MIN_GAP, SHAPE_COOLDOWN_MS, SNAP_COOLDOWN_MS, SNAP_DISCARD_MS, SNAP_HEARD_MS, SNAP_OPEN, SNAP_PREP_MS,
   SNAP_READY, SNAP_REACH, SNAP_RELEASE_MS, SNAP_SYNC_MS, SHAPE_MIN_PX, SHAPE_RELEASE_MS, SQUARE_SNAP, THUMB_AXIS_DEG,
   THUMB_CLOSED, THUMB_HOLD_MS, THUMB_OPEN, THUMB_AFTER_PINCH_MS, THUMB_POINT_EXT, THUMB_REARM_MS, WASM_BASE,
-  WHEEL_HOLD_MS, WHEEL_PICK_MS, WHEEL_SPAN_DEG, WHEEL_STILL, WHEEL_UPRIGHT_DEG,
+  WHEEL_HOLD_MS, WHEEL_PICK_MS, WHEEL_RING_MS, WHEEL_SPAN_DEG, WHEEL_STILL, WHEEL_UPRIGHT_DEG,
 } from "./constants";
 import { listenForSnaps, type MicState, type SnapListener } from "./snap-audio";
 
@@ -738,7 +738,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
   function wheelPlacement(f: Fit, s: Slot): { center: Pt; radius: number } {
     let x = 0, y = 0;
     for (const i of [0, 5, 9, 13, 17]) { x += s.lm[i].x / 5; y += s.lm[i].y / 5; } // palm centre
-    return { center: toScreen(f, x * f.vw, y * f.vh), radius: s.palm * f.s * 1.7 };
+    return { center: toScreen(f, x * f.vw, y * f.vh), radius: s.palm * f.s * 1.3 };
   }
 
   function openWheel(f: Fit, s: Slot, t: number) {
@@ -950,29 +950,57 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     ctx.restore();
   }
 
+  // the page's cartoon face (Fredoka, set by next/font on <body>), for text drawn on the canvas
+  let toonFamily = "";
+  function toonFont(px: number) {
+    toonFamily ||= [getComputedStyle(canvas).getPropertyValue("--font-fredoka").trim(), "ui-rounded, system-ui, sans-serif"].filter(Boolean).join(", ");
+    return `600 ${px}px ${toonFamily}`;
+  }
+
+  /** "Hold it…" ring that fills clockwise from the top, with a glyph in the middle. */
+  function progressRing(x: number, y: number, prog: number, glyph: string) {
+    ctx.fillStyle = "rgba(15,17,21,.65)";
+    ctx.beginPath(); ctx.arc(x, y, 18, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#4fd1c5"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(x, y, 18, -Math.PI / 2, -Math.PI / 2 + prog * 2 * Math.PI); ctx.stroke();
+    ctx.fillStyle = "#fffdf5"; ctx.font = "600 18px ui-rounded, system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(glyph, x, y + 1);
+  }
+
+  // A slim paper arc with a soft shadow, a small flat dot of each colour spaced along it (the chosen
+  // one a little bigger), and its name in a small pill on the palm.
   function drawWheel() {
     if (!wheel) return;
-    const { center: [cx, cy], radius: r, idx, theta } = wheel;
+    const { center: [cx, cy], radius: r, idx } = wheel;
+    const INK = "#1d1b16", PAPER = "#fffdf5";
     const n = PALETTE.length, seg = WHEEL_SPAN_DEG / n;
-    const r0 = r * 1.05, r1 = r * 1.55;
+    const angle = (i: number) => (-90 - WHEEL_SPAN_DEG / 2 + (i + 0.5) * seg) * DEG; // middle of colour i
+    const rm = r * 1.12, band = r * 0.3; // the arc's centre line and thickness
     ctx.save();
+    ctx.lineCap = ctx.lineJoin = "round";
+
+    // paper arc with a soft shadow instead of an outline; its round caps wrap the first and last dots
+    ctx.beginPath(); ctx.arc(cx, cy, rm, angle(0), angle(n - 1));
+    ctx.shadowColor = "rgba(0,0,0,.3)"; ctx.shadowBlur = 8;
+    ctx.strokeStyle = PAPER; ctx.lineWidth = band; ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // colour dots, about half the spacing across so there's a clear gap even beside the bigger chosen one
+    const dot = rm * seg * DEG * 0.26;
+    const at = (i: number): Pt => [cx + Math.cos(angle(i)) * rm, cy + Math.sin(angle(i)) * rm];
     for (let i = 0; i < n; i++) {
-      const a0 = (-90 - WHEEL_SPAN_DEG / 2 + i * seg) * DEG, a1 = a0 + seg * DEG;
-      const on = i === idx, out = on ? r1 + r * 0.18 : r1;
-      ctx.beginPath(); ctx.arc(cx, cy, out, a0 + 0.02, a1 - 0.02); ctx.arc(cx, cy, r0, a1 - 0.02, a0 + 0.02, true); ctx.closePath();
-      ctx.fillStyle = PALETTE[i].color; ctx.globalAlpha = on ? 1 : 0.75; ctx.fill();
-      ctx.globalAlpha = 1; ctx.lineWidth = on ? 4 : 2; ctx.strokeStyle = on ? "#fffdf5" : "#1d1b16"; ctx.stroke();
+      ctx.beginPath(); ctx.arc(...at(i), i === idx ? dot * 1.3 : dot, 0, 7);
+      ctx.fillStyle = PALETTE[i].color; ctx.fill();
     }
-    // needle follows the hand's tilt; hub shows the colour that a fist would pick
-    const a = (-90 + clamp(theta, -WHEEL_SPAN_DEG / 2, WHEEL_SPAN_DEG / 2)) * DEG;
-    ctx.strokeStyle = "#fffdf5"; ctx.lineWidth = 4; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * r0 * 0.95, cy + Math.sin(a) * r0 * 0.95); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, r * 0.28, 0, 7);
-    ctx.fillStyle = PALETTE[idx].color; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = "#1d1b16"; ctx.stroke();
-    ctx.font = "600 16px ui-rounded, system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.fillStyle = "#fffdf5";
-    const label = `${PALETTE[idx].name} · tilt to choose, fist to pick`;
-    ctx.strokeText(label, cx, cy + r * 0.28 + 26); ctx.fillText(label, cx, cy + r * 0.28 + 26);
+
+    // the chosen colour's name, in a pill on the palm
+    const label = PALETTE[idx].name;
+    ctx.font = toonFont(13); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const pw = ctx.measureText(label).width + 18, ph = 22;
+    ctx.beginPath(); ctx.roundRect(cx - pw / 2, cy - ph / 2, pw, ph, ph / 2);
+    ctx.fillStyle = PAPER; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = INK; ctx.fillText(label, cx, cy + 1);
     ctx.restore();
   }
 
@@ -1012,14 +1040,14 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
       if (s.live && s.thumbPose && !s.thumbFired) {
         const [tx, ty] = P[4];
         const prog = clamp((now - s.thumbSince) / THUMB_HOLD_MS, 0, 1);
-        const bx = tx + s.thumbPose * 30, by = ty;
-        ctx.fillStyle = "rgba(15,17,21,.65)";
-        ctx.beginPath(); ctx.arc(bx, by, 18, 0, 7); ctx.fill();
-        ctx.strokeStyle = "#4fd1c5"; ctx.lineWidth = 4; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(bx, by, 18, -Math.PI / 2, -Math.PI / 2 + prog * 2 * Math.PI); ctx.stroke();
-        ctx.fillStyle = "#fffdf5"; ctx.font = "600 18px ui-rounded, system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(s.thumbPose < 0 ? "↩" : "↪", bx, by + 1);
+        progressRing(tx + s.thumbPose * 30, ty, prog, s.thumbPose < 0 ? "↩" : "↪");
+      }
+
+      // ✋ progress: ring fills on the palm while it is held still, then the colour wheel opens there.
+      // Not straight away, so an open hand that only pauses for a moment doesn't flash a ring.
+      if (s.live && s.still && now - s.still.t > WHEEL_RING_MS) {
+        const prog = clamp((now - s.still.t - WHEEL_RING_MS) / (WHEEL_HOLD_MS - WHEEL_RING_MS), 0, 1);
+        progressRing(...wheelPlacement(f, s).center, prog, "🎨");
       }
     }
     ctx.restore();

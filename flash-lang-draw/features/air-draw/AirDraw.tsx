@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { REVEAL_MS, SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
+import { CORNER_BUTTON } from "./corner-button";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import type { MicState } from "./snap-audio";
@@ -29,8 +30,7 @@ type Card = { lang: LangCode; word: Word };
 
 // the buttons in the top corners of the drawing page; data-hand-target makes them pressable by
 // holding a fingertip over them (see HandCursor)
-const TOP_BUTTON =
-  "font-toon fixed top-4 z-10 cursor-pointer rounded-full border-[3px] border-[#1d1b16] bg-[#fffdf5] px-4 py-2 text-base font-semibold text-[#1d1b16] transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]";
+const TOP_BUTTON = `${CORNER_BUTTON} fixed top-4 z-10`;
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): the round can be chosen and the classifier driven directly.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
@@ -152,10 +152,15 @@ export default function AirDraw() {
     // Skipping shows the answer first (its English, and a doodle of it): the learner skipped
     // because they don't know the word.
     // A second skip (or one on a solved word) moves on straight away.
+    // The player's own drawing is wiped, so the sample doodles aren't shown over it.
     function skip() {
       if (!current) return;
       if (won || skipped) { nextRound(); return; }
       skipped = true;
+      engine.reset();
+      predictor?.reset(); // a guess for the wiped drawing must not come in late
+      setPrediction(NO_PREDICTION);
+      if (hook) hook.prediction = NO_PREDICTION;
       setRevealed(true);
       solvedTimer = setTimeout(nextRound, REVEAL_MS);
     }
@@ -266,7 +271,7 @@ export default function AirDraw() {
       <video ref={videoRef} playsInline muted className="pointer-events-none fixed left-0 top-0 h-[2px] w-[2px] opacity-0" />
       <canvas ref={canvasRef} className="fixed inset-0 block h-screen w-screen" />
 
-      {/* brief gesture feedback ("↩ Undo", "✨ Cleared", "🎨 Coral") */}
+      {/* brief gesture feedback ("↩ Undo", "✨ Cleared", "🎨 Red") */}
       <div
         role="status"
         data-testid="toast"
@@ -295,7 +300,10 @@ export default function AirDraw() {
             ← Languages
           </button>
           {!solved && (
+            // keyed: "Next →" is a new button, so a fingertip still resting where it pressed
+            // "Skip →" starts a fresh dwell (with its ring) instead of counting as already pressed
             <button
+              key={revealed ? "next" : "skip"}
               type="button"
               onClick={() => gameRef.current?.skip()}
               data-hand-target
@@ -305,14 +313,15 @@ export default function AirDraw() {
             </button>
           )}
 
-          {/* the flashcard prompt: what to draw */}
-          <WordCard word={card.word} lang={card.lang} solved={solved} revealed={revealed} />
-          {/* skipped: a Quick Draw doodle of the word, in the middle of the screen */}
-          {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
+          {/* the flashcard prompt: what to draw. Skipped: a few Quick Draw doodles of the word under it */}
+          <WordCard word={card.word} lang={card.lang} solved={solved} revealed={revealed}>
+            {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
+          </WordCard>
 
           <GestureHints mic={mic} />
-          {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup) */}
-          <GuessFeed guesses={prediction.wordGuesses} lang={card.lang} />
+          {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup).
+              Hidden while a skipped word's doodles are up: the answer is showing, the guesses no longer matter */}
+          {!revealed && <GuessFeed guesses={prediction.wordGuesses} lang={card.lang} />}
           {debug && <DebugPanel status={classifier} prediction={prediction} />}
         </>
       ) : (

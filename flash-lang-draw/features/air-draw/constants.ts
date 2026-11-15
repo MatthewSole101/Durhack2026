@@ -78,16 +78,17 @@ export const HINTS_OPEN_MS = 9000; // gesture cheat-sheet stays open this long o
 
 // ✋ colour wheel: hold an open palm still → wheel opens; tilt the hand to choose; fist to pick
 export const PALETTE = [ // left → right on the wheel
-  { name: "Coral", color: "#ff6b6b" },
+  { name: "Red", color: "#ff6b6b" },
   { name: "Orange", color: "#ff9f43" },
-  { name: "Sunshine", color: "#ffd166" },
-  { name: "Lime", color: "#95e06c" },
+  { name: "Yellow", color: "#ffd166" },
+  { name: "Green", color: "#95e06c" },
   { name: "Teal", color: "#4fd1c5" },
-  { name: "Sky", color: "#5ab0ff" },
-  { name: "Violet", color: "#a78bfa" },
+  { name: "Blue", color: "#5ab0ff" },
+  { name: "Purple", color: "#a78bfa" },
   { name: "Pink", color: "#f78fb3" },
 ] as const;
-export const WHEEL_HOLD_MS = 1000; // open palm must be held this still for this long (a resting hand shouldn't open it)
+export const WHEEL_HOLD_MS = 650; // open palm must be held this still for this long (a resting hand shouldn't open it)
+export const WHEEL_RING_MS = 150; // the hold's progress ring appears after this long (a passing pause shows nothing)
 export const WHEEL_STILL = 0.025; // max palm drift while holding, as a fraction of frame width
 export const WHEEL_UPRIGHT_DEG = 40; // hand must be roughly upright to open the wheel
 export const WHEEL_SPAN_DEG = 140; // hand tilt range covering the whole palette (±70°)

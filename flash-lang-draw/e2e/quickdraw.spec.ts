@@ -200,14 +200,18 @@ test.describe("labels and scoring", () => {
     expect(topK(probs, ["a", "b", "c"], 2, l => l !== "b")).toEqual([{ label: "c", prob: probs[2] }, { label: "a", prob: probs[0] }]);
   });
 
-  test("every flashcard word has a Quick Draw doodle to show when it is skipped", () => {
-    const doodles: Record<string, string[]> = JSON.parse(readFileSync(join(__dirname, "../public/doodles/quickdraw.json"), "utf8"));
-    expect(Object.keys(doodles).sort()).toEqual(WORDS.map(w => w.labels[0]).sort()); // one each, no strays
-    for (const [label, strokes] of Object.entries(doodles)) {
-      expect(strokes.length, label).toBeGreaterThan(0);
-      for (const d of strokes) {
-        expect(d, label).toMatch(/^M\d+ \d+(L\d+ \d+)+$|^M\d+ \d+h0\.01$/); // a polyline, or a dot
-        for (const n of d.match(/\d+/g)!.map(Number)) expect(n, label).toBeLessThanOrEqual(255); // inside the 0..255 box
+  test("every flashcard word has a few Quick Draw doodles to show when it is skipped", () => {
+    const doodles: Record<string, string[][]> = JSON.parse(readFileSync(join(__dirname, "../public/doodles/quickdraw.json"), "utf8"));
+    expect(Object.keys(doodles).sort()).toEqual(WORDS.map(w => w.labels[0]).sort()); // one entry each, no strays
+    for (const [label, drawings] of Object.entries(doodles)) {
+      expect(drawings, label).toHaveLength(3);
+      expect(new Set(drawings.map(d => d.join())).size, label).toBe(3); // three different drawings
+      for (const strokes of drawings) {
+        expect(strokes.length, label).toBeGreaterThan(0);
+        for (const d of strokes) {
+          expect(d, label).toMatch(/^M\d+ \d+(L\d+ \d+)+$|^M\d+ \d+h0\.01$/); // a polyline, or a dot
+          for (const n of d.match(/\d+/g)!.map(Number)) expect(n, label).toBeLessThanOrEqual(255); // inside the 0..255 box
+        }
       }
     }
   });
@@ -407,20 +411,26 @@ test.describe("game", () => {
     await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Skipped");
     await expect(page.getByTestId("word")).toHaveText("el gato");
     await expect(english).toHaveText("in English: cat");
-    // …and a Quick Draw doodle of it is shown in the middle of the screen, clear of the card
+    // …and a few Quick Draw doodles of it are shown in a row under the card, with a clear gap
     const doodle = page.getByTestId("skip-doodle");
     await expect(doodle).toBeVisible();
     await expect(doodle).toHaveAttribute("data-label", "cat");
-    await expect(doodle.getByRole("img", { name: "A doodle of: cat" })).toBeVisible();
-    expect(await doodle.locator("path").count()).toBeGreaterThan(0);
+    await expect(page.getByRole("group", { name: "Doodles of: cat" })).toBeVisible();
+    await expect(doodle.getByRole("img")).toHaveCount(3);
+    await expect(doodle.getByRole("img", { name: "Doodle 1 of 3" })).toBeVisible();
+    for (const img of await doodle.getByRole("img").all()) expect(await img.locator("path").count()).toBeGreaterThan(0);
     const [box, cardBox, view] = [await doodle.boundingBox(), await card.boundingBox(), page.viewportSize()!];
     expect(Math.abs(box!.x + box!.width / 2 - view.width / 2)).toBeLessThan(20);
-    expect(Math.abs(box!.y + box!.height / 2 - view.height / 2)).toBeLessThan(20);
-    expect(box!.y).toBeGreaterThan(cardBox!.y + cardBox!.height);
+    expect(box!.y).toBeGreaterThan(cardBox!.y + cardBox!.height + 32); // well clear of the card
+    await expect(page.getByTestId("guess-feed")).toHaveCount(0); // the "You drew…" feed is hidden meanwhile
+    // …and the player's own drawing is wiped, with its guesses
+    expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
+    await expect(guesses).toHaveText(["Draw something…"]);
     await expect(page.getByTestId("word")).toHaveText("line", { timeout: 5_000 }); // moves on by itself
     await expect(card).toHaveAttribute("data-revealed", "false");
     await expect(english).toHaveCount(0);
     await expect(doodle).toHaveCount(0);
+    await expect(page.getByTestId("guess-feed")).toBeVisible(); // back with the new word
     await expect(guesses).toHaveText(["Draw something…"]);
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
 

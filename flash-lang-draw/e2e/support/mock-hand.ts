@@ -135,7 +135,7 @@ export function installMock() {
     pinchFast: e => (e > 300 ? null : [{ ext: POINT, thumb: "pinch", dx: 0.45 * (e / 300) }]),
     // …a relaxed hand, thumb resting against the side of the index finger
     thumbSide: e => (e > 700 ? null : [{ ext: POINT, thumb: [-45, -135, 0], dx: 0.1 * (e / 700) }]),
-    // ✋ still (wheel opens at 1 s) → tilt 60° to the user's left → hold → ✊ pick
+    // ✋ still (wheel opens at 0.65 s) → tilt 60° to the user's left → hold → ✊ pick
     wheel: e => (e > 2000 ? null : [e < 1700
       ? { ext: OPEN, thumb: "out", rot: 60 * ramp(e, 1200, 300) }
       : { ext: FIST, thumb: "tucked", rot: 60 }]),

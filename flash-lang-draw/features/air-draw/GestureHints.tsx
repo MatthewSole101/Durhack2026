@@ -5,6 +5,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { HINTS_OPEN_MS } from "./constants";
+import { CORNER_BUTTON } from "./corner-button";
 import type { MicState } from "./snap-audio";
 
 // how snaps are being detected right now (shown under the cheat-sheet, and next to the pill)
@@ -38,12 +39,12 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
   return (
     <div data-testid="gesture-hints" data-open={open} className="font-hand fixed bottom-5 right-5 z-10 flex flex-col items-end gap-2 text-[#1d1b16]">
       {MIC_NOTE[mic] && (
-        <div data-testid="mic-note" className="font-toon max-w-[290px] rounded-lg border-2 border-[#1d1b16] bg-[#fff3c4] px-2.5 py-1 text-xs font-semibold shadow-[2px_3px_0_rgba(0,0,0,0.45)]">
+        <div data-testid="mic-note" className="font-toon max-w-[290px] rounded-lg border-2 border-[#1d1b16] bg-[#fff3c4] px-2.5 py-1 text-xs font-semibold">
           {MIC_NOTE[mic]}
         </div>
       )}
       {open ? (
-        <div className="w-[290px] rotate-[-1deg] rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3 shadow-[4px_5px_0_rgba(0,0,0,0.45)]">
+        <div className="w-[290px] rotate-[-1deg] rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3">
           <div className="mb-1 flex items-center justify-between">
             <b className="font-toon text-sm">How to draw</b>
             <button
@@ -77,7 +78,7 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
           type="button"
           onClick={() => setOpen(true)}
           data-hand-target
-          className="font-toon cursor-pointer rounded-full border-2 border-[#1d1b16] bg-[#fffdf5] px-3 py-1 text-base font-semibold transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]"
+          className={CORNER_BUTTON}
         >
           How to draw ?
         </button>
