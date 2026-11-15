@@ -172,7 +172,8 @@ It only downloads the first few samples of each category (HTTP range requests).
 
 `features/languages/words.ts` holds 284 drawable words in all seven languages. Each word is one
 of the model's 345 Quick Draw classes; the other 61 classes (the Eiffel Tower, squiggle, …) have
-no entry, so they are never dealt and show up in English in the guess feed. Each word has a
+no entry, so they are never dealt and never listed in the "You drew…" guess feed, which ranks the
+model's guesses among the 284 words only. (The `D` debug panel still shows the model's own top 5.) Each word has a
 `labels` list (the Quick Draw classes that count as that word) and a `t` object with the word
 in each language, keyed by language code. `features/game/deck.ts` deals every word once,
 shuffled, before any repeats.
@@ -196,7 +197,7 @@ npm run lint
 npm run test:e2e
 ```
 
-24 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
+25 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
 3111, its own `.next-e2e` build folder so it can run next to `npm run dev`):
 
 - `e2e/air-draw.spec.ts` — gestures, colour wheel, two-hand shapes, the hand-pressed start

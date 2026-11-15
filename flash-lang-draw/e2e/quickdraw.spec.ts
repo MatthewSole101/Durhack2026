@@ -10,6 +10,9 @@ import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
 import { toProbabilities, topK } from "../features/quickdraw/model";
 import { installMock, langButton, play, testWord, trackErrors } from "./support/mock-hand";
 
+/** Is this Quick Draw class one of the flashcard words? (The same rule the game uses for the guess feed.) */
+const isWord = (label: string) => wordForLabel(label) !== undefined;
+
 // ---------------------------------------------------------------------------------------------
 // Pure logic (runs in Node)
 // ---------------------------------------------------------------------------------------------
@@ -193,6 +196,21 @@ test.describe("labels and scoring", () => {
     expect(fromLogits.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
     expect(fromLogits[1]).toBeGreaterThan(fromLogits[2]);
     expect(topK(probs, ["a", "b", "c"], 2)).toEqual([{ label: "b", prob: probs[1] }, { label: "c", prob: probs[2] }]);
+    // ranking a subset: rejected classes are skipped, the probabilities are still the model's own
+    expect(topK(probs, ["a", "b", "c"], 2, l => l !== "b")).toEqual([{ label: "c", prob: probs[2] }, { label: "a", prob: probs[0] }]);
+  });
+
+  test("the guesses shown to the player are ranked among the flashcard words only", () => {
+    expect(BUILTIN_LABELS.filter(isWord)).toHaveLength(WORDS.length); // 284 words; the other 61 classes are never shown
+    // a drawing the model mostly takes for things that are not flashcard words
+    const probs = BUILTIN_LABELS.map(() => 0);
+    const likely = { squiggle: 0.4, "The Eiffel Tower": 0.2, line: 0.15, zigzag: 0.1, snake: 0.06, river: 0.04, rain: 0.03, grass: 0.02 };
+    for (const [label, p] of Object.entries(likely)) probs[BUILTIN_LABELS.indexOf(label)] = p;
+    expect(topK(probs, BUILTIN_LABELS).map(g => g.label)).toEqual(["squiggle", "The Eiffel Tower", "line", "zigzag", "snake"]);
+    expect(topK(probs, BUILTIN_LABELS, 5, isWord)).toEqual([
+      { label: "line", prob: 0.15 }, { label: "snake", prob: 0.06 }, { label: "river", prob: 0.04 },
+      { label: "rain", prob: 0.03 }, { label: "grass", prob: 0.02 },
+    ]);
   });
 });
 
@@ -409,6 +427,12 @@ test.describe("game", () => {
     // draw a straight line: the feed fills from the model's live top guesses
     await play(page, "pinchDraw");
     await expect(items).toHaveCount(5);
+    const shown = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+    // only flashcard words are listed: the best five of them, by the model's own probabilities
+    for (const label of shown) expect(isWord(label), label).toBe(true);
+    const probs = await page.evaluate(() => window.__quickDraw.probabilities(Array.from(window.__quickDraw.prediction.input!)));
+    expect(shown).toEqual(topK(probs, BUILTIN_LABELS, 5, isWord).map(g => g.label));
+    expect(shown).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
     const topLabel = await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label);
     const top = items.first();
     await expect(top).toHaveAttribute("data-rank", "1");
@@ -422,5 +446,18 @@ test.describe("game", () => {
     await page.keyboard.press("c");
     await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
     await expect(items).toHaveCount(0);
+
+    // a rectangle: one of the model's own top five ("postcard") is not a flashcard word.
+    // The feed leaves it out and still lists five words; the debug panel keeps the model's view.
+    await play(page, "rect");
+    await expect(items).toHaveCount(5);
+    const raw = await page.evaluate(() => window.__quickDraw.prediction.guesses.map(g => g.label));
+    expect(raw.filter(l => !isWord(l))).toEqual(["postcard"]);
+    const listed = await items.evaluateAll(els => els.map(el => el.getAttribute("data-label")!));
+    expect(listed).not.toContain("postcard");
+    for (const label of listed) expect(isWord(label), label).toBe(true);
+    expect(listed).toEqual(await page.evaluate(() => window.__quickDraw.prediction.wordGuesses.map(g => g.label)));
+    await page.keyboard.press("d");
+    await expect(page.getByTestId("quickdraw-guesses").getByRole("listitem").nth(raw.indexOf("postcard"))).toContainText("postcard");
   });
 });

@@ -55,9 +55,10 @@ export function WordCard({ word, lang, solved, onSkip }: { word: Word; lang: Lan
 
 /**
  * Live feed of the classifier's top guesses, translated into the language being learnt.
- * Translation happens here, at render time, from the raw predicted labels — switching
- * language re-renders the feed without re-running inference. Labels with no dictionary
- * entry fall back to the raw (English) label.
+ * It is given the guesses among the flashcard words only (Prediction.wordGuesses), so classes
+ * the dictionary doesn't cover never show up. Translation happens here, at render time, from
+ * the predicted labels — switching language re-renders the feed without re-running inference.
+ * A label with no dictionary entry, if one is ever passed in, falls back to the raw label.
  */
 export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; lang: LangCode }) {
   return (

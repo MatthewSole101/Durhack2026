@@ -1,5 +1,5 @@
 // Flashcard words: simple, drawable things. Every word is one Quick Draw class, so the model
-// can recognise all of them (284 of the 345 classes; the rest stay untranslated in the guess feed).
+// can recognise all of them (284 of the 345 classes; the rest are never dealt or shown as a guess).
 //
 // `labels` are the Quick Draw classes (features/quickdraw/labels.ts) that count as this word:
 // a round is won when the classifier's top guess is one of them.
