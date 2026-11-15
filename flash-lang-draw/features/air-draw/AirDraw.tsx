@@ -7,6 +7,7 @@ import GestureHints from "./GestureHints";
 import type { MicState } from "./snap-audio";
 import { createDeck, isCorrect } from "@/features/game/deck";
 import { DebugPanel, GuessFeed, WordCard, type ClassifierStatus } from "@/features/game/GameHud";
+import { loadDoodles, SkipDoodle } from "@/features/game/SkipDoodle";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
 import type { LangCode } from "@/features/languages/languages";
 import { wordForLabel, type Word } from "@/features/languages/words";
@@ -123,6 +124,8 @@ export default function AirDraw() {
       e => { if (alive) setStatus(cameraError(e)); },
     );
 
+    loadDoodles().catch(e => console.error(e)); // ready before the first skip; a skip still works without them
+
     // ---------------- rounds ----------------
     function nextRound() {
       clearTimeout(solvedTimer);
@@ -146,7 +149,8 @@ export default function AirDraw() {
       if (hook) hook.prediction = NO_PREDICTION;
     }
 
-    // Skipping shows the answer first: the learner skipped because they don't know the word.
+    // Skipping shows the answer first (its English, and a doodle of it): the learner skipped
+    // because they don't know the word.
     // A second skip (or one on a solved word) moves on straight away.
     function skip() {
       if (!current) return;
@@ -303,6 +307,8 @@ export default function AirDraw() {
 
           {/* the flashcard prompt: what to draw */}
           <WordCard word={card.word} lang={card.lang} solved={solved} revealed={revealed} />
+          {/* skipped: a Quick Draw doodle of the word, in the middle of the screen */}
+          {revealed && <SkipDoodle key={card.word.id} word={card.word} />}
 
           <GestureHints mic={mic} />
           {/* live top guesses among the flashcard words, translated into the language being learnt (render-time lookup) */}

@@ -26,7 +26,8 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
    model's **top guess** is the word on the card, the card turns green ("Correct!") and the next
    word comes up after 1.6 s on a clean canvas.
 5. **Skip / leave.** "Skip →" (or `N`) gives up on the word: the card shows what it means in
-   English for 3 s, then the next word comes up ("Next →" or `N` again moves on at once). "← Languages" (or
+   English, with a doodle of it from the Quick, Draw! dataset in the middle of the screen, for
+   3 s, then the next word comes up ("Next →" or `N` again moves on at once). "← Languages" (or
    `Esc`) goes back to the language list.
 
 ### Gestures
@@ -186,8 +187,14 @@ their article, Japanese is written in kana, and Yoruba is written with tone mark
 (and some Telugu) words for modern objects are loanwords or descriptive phrases; they have not
 been checked by a native speaker.
 
+`public/doodles/quickdraw.json` holds one doodle per word, shown when the word is skipped
+(`features/game/SkipDoodle.tsx`). They are real drawings from Google's
+[Quick, Draw! dataset](https://github.com/googlecreativelab/quickdraw-dataset) (CC BY 4.0): for
+each word, the one of its first 30 recognised samples that this app's model is most sure about.
+Each stroke is stored as an SVG path in the dataset's 0–255 coordinate space.
+
 To add a word: add a row with its translations and one or more class names from
-`features/quickdraw/labels.ts`. To add a language: add it to `LANGUAGES`, give it a flag, and
+`features/quickdraw/labels.ts`, and a doodle for its first class in `quickdraw.json`. To add a language: add it to `LANGUAGES`, give it a flag, and
 add its code to every word's `t`. Tests fail if a label does not exist, if two words claim the
 same label, or if a word is missing a language.
 
@@ -199,7 +206,7 @@ npm run lint
 npm run test:e2e
 ```
 
-31 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
+33 Playwright tests in headless Chromium, on a test build (`NEXT_PUBLIC_AIR_DRAW_TEST=1`, port
 3111, its own `.next-e2e` build folder so it can run next to `npm run dev`):
 
 - `e2e/air-draw.spec.ts` — gestures, colour wheel, two-hand shapes, the hand-pressed start
