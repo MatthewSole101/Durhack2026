@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DRAW_ARM_MS } from "../features/air-draw/constants";
 import { createDeck, isCorrect } from "../features/game/deck";
-import { WORDS, type Word } from "../features/languages/words";
+import { WORDS, wordForLabel, type Word } from "../features/languages/words";
 import { fixBatchSize } from "../features/quickdraw/flatbuffer";
 import { BUILTIN_LABELS, parseLabels } from "../features/quickdraw/labels";
 import { toProbabilities, topK } from "../features/quickdraw/model";
@@ -139,6 +139,19 @@ test.describe("labels and scoring", () => {
     expect(isCorrect(apple, undefined)).toBe(false); // nothing drawn
     expect(isCorrect(boat, "sailboat")).toBe(true); // "boat" is not a class: any kind of boat counts
     expect(isCorrect(boat, "canoe")).toBe(true);
+  });
+
+  test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
+    // every label of every word resolves to that word (the reverse of the deck mapping)
+    for (const w of WORDS) for (const label of w.labels) expect(wordForLabel(label), label).toBe(w);
+    // a multi-class word: any of its labels gives the same base word + translations
+    const boat = wordForLabel("sailboat")!;
+    expect(boat.en).toBe("boat");
+    expect(boat.es).toBe("el barco");
+    expect(boat.ja).toBe("ふね");
+    // labels the dictionary doesn't cover fall back to undefined (the feed shows the raw label)
+    expect(wordForLabel("line")).toBeUndefined();
+    expect(wordForLabel("The Eiffel Tower")).toBeUndefined();
   });
 
   test("the deck deals every word once before repeating", () => {
@@ -364,5 +377,31 @@ test.describe("game", () => {
     await expect(card).toHaveAttribute("data-solved", "false");
     expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
     expect(await page.evaluate(() => window.__quickDraw.rounds)).toEqual(["line", "zebra", "cat"]);
+  });
+
+  test("the live translated guess feed tracks the drawing and the chosen language", async ({ page }) => {
+    await startGame(page); // picks Español
+    const feed = page.getByTestId("guess-feed");
+    const items = page.getByTestId("guess-feed-item");
+
+    // bound to the selected language, with the empty placeholder before anything is drawn
+    await expect(feed).toHaveAttribute("data-lang", "es");
+    await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
+    await expect(items).toHaveCount(0);
+
+    // draw a straight line: the feed fills from the model's live top guesses
+    await play(page, "pointTucked");
+    await expect(items).toHaveCount(5);
+    const topLabel = await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label);
+    const top = items.first();
+    await expect(top).toHaveAttribute("data-rank", "1");
+    await expect(top).toHaveAttribute("data-label", topLabel); // wired to real inference
+    // "line" has no dictionary entry, so the raw label is shown (the fallback path)
+    await expect(top).toContainText(topLabel);
+
+    // clear the canvas → back to the empty placeholder (no inference on an empty board)
+    await page.keyboard.press("c");
+    await expect(page.getByTestId("guess-feed-empty")).toBeVisible();
+    await expect(items).toHaveCount(0);
   });
 });

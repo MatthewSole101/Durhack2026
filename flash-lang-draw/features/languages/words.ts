@@ -7,6 +7,12 @@ import type { LangCode } from "./languages";
 
 export type Word = { id: string; en: string; labels: readonly string[] } & Record<LangCode, string>;
 
+/** Quick Draw label → the flashcard word it counts as ("sailboat" → boat). */
+const WORD_BY_LABEL = new Map<string, Word>();
+
+/** The flashcard word a classifier label belongs to, or undefined when the dictionary has no entry. */
+export const wordForLabel = (label: string): Word | undefined => WORD_BY_LABEL.get(label);
+
 export const WORDS: Word[] = [
   { id: "sun", en: "sun", labels: ["sun"], es: "el sol", fr: "le soleil", de: "die Sonne", it: "il sole", pt: "o sol", ja: "たいよう", ko: "해" },
   { id: "cat", en: "cat", labels: ["cat"], es: "el gato", fr: "le chat", de: "die Katze", it: "il gatto", pt: "o gato", ja: "ねこ", ko: "고양이" },
@@ -21,3 +27,5 @@ export const WORDS: Word[] = [
   { id: "bird", en: "bird", labels: ["bird"], es: "el pájaro", fr: "l'oiseau", de: "der Vogel", it: "l'uccello", pt: "o pássaro", ja: "とり", ko: "새" },
   { id: "boat", en: "boat", labels: ["sailboat", "speedboat", "cruise ship", "canoe"], es: "el barco", fr: "le bateau", de: "das Boot", it: "la barca", pt: "o barco", ja: "ふね", ko: "배" },
 ];
+
+for (const w of WORDS) for (const label of w.labels) WORD_BY_LABEL.set(label, w);
