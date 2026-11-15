@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SOLVED_MS, TOAST_MS } from "./constants";
+import { SOLVED_MS, TOAST_MS, PREDICT_CONFIDENCE_THRESH } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import { createDeck, isCorrect } from "@/features/game/deck";
@@ -135,7 +135,7 @@ export default function AirDraw() {
       if (!current) return; // back on the language list
       setPrediction(p);
       if (hook) hook.prediction = p;
-      if (!won && isCorrect(current, p.guesses[0]?.label)) {
+      if (!won && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
         solvedTimer = setTimeout(nextRound, SOLVED_MS);

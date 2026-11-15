@@ -64,3 +64,5 @@ export const SHAPE_MIN_PX = 24; // shapes smaller than this (video px) are dropp
 export const SHAPE_COOLDOWN_MS = 500; // after placing a shape, before another can start
 
 export const SOLVED_MS = 1600; // how long a solved word stays up before the next one
+
+export const PREDICT_CONFIDENCE_THRESH = 0.75; // How confident a prediction has to be to be counted as correct
