@@ -1,15 +1,16 @@
 "use client";
 
-// In-game overlay: the flashcard with the word to draw (top) and an optional debug panel
-// showing what the classifier sees and guesses.
+// In-game overlay: the flashcard with the word to draw (top), the hint box under it, and an
+// optional debug panel showing what the classifier sees and guesses.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { maskWord } from "./hint";
 import { INPUT_SIZE } from "@/features/quickdraw/constants";
 import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
 import { Flag } from "@/features/languages/Flag";
 import { type LangCode, languageByCode } from "@/features/languages/languages";
-import { wordForLabel, type Word } from "@/features/languages/words";
+import { translate, type Word } from "@/features/languages/words";
 
 export type ClassifierStatus =
   | { state: "runtime" | "compiling" }
@@ -31,30 +32,35 @@ export function WordCard({ word, lang, solved, revealed = false, children }: {
 }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
-      <div
-        data-testid="word-card"
-        data-lang={lang}
-        data-word={word.id}
-        data-solved={solved}
-        data-revealed={revealed}
-        role="status"
-        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] transition-colors duration-200 ${
-          solved ? "bg-[#b9efb0]" : revealed ? "bg-[#ffe9a8]" : "bg-[#fffdf5]"
-        }`}
-      >
-        <div data-testid="word-card-heading" className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
-          <Flag code={lang} width={21} height={14} />
-          {languageByCode(lang).name} · {solved ? "Correct!" : revealed ? "Skipped" : "Draw this"}
-        </div>
-        <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
-          {solved && <span aria-hidden>✓ </span>}
-          <span lang={lang} data-testid="word">{word.t[lang]}</span>
-        </div>
-        {revealed && (
-          <div lang="en" data-testid="word-english" className="font-hand text-xl leading-tight text-[#1d1b16]/75">
-            in English: <span className="font-semibold text-[#1d1b16]">{word.en}</span>
+      {/* card + hint box: one column as wide as the card, tilted together */}
+      <div className="flex w-fit rotate-[-1deg] flex-col items-stretch gap-2">
+        <div
+          data-testid="word-card"
+          data-lang={lang}
+          data-word={word.id}
+          data-solved={solved}
+          data-revealed={revealed}
+          role="status"
+          className={`rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
+            solved ? "bg-[#b9efb0]" : revealed ? "bg-[#ffe9a8]" : "bg-[#fffdf5]"
+          }`}
+        >
+          <div data-testid="word-card-heading" className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
+            <Flag code={lang} width={21} height={14} />
+            {languageByCode(lang).name} · {solved ? "Correct!" : revealed ? "Skipped" : "Draw this"}
           </div>
-        )}
+          <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
+            {solved && <span aria-hidden>✓ </span>}
+            <span lang={lang} data-testid="word">{translate(word, lang)}</span>
+          </div>
+          {revealed && (
+            <div lang="en" data-testid="word-english" className="font-hand text-xl leading-tight text-[#1d1b16]/75">
+              in English: <span className="font-semibold text-[#1d1b16]">{word.en}</span>
+            </div>
+          )}
+        </div>
+        {/* no hint once the word is solved, or skipped (its English is on the card then) */}
+        {!solved && !revealed && <HintBox key={word.id} word={word} />}
       </div>
       {children}
     </div>
@@ -62,11 +68,40 @@ export function WordCard({ word, lang, solved, revealed = false, children }: {
 }
 
 /**
- * Live feed of the classifier's top guesses, translated into the language being learnt.
- * It is given the guesses among the flashcard words only (Prediction.wordGuesses), so classes
- * the dictionary doesn't cover never show up. Translation happens here, at render time, from
- * the predicted labels — switching language re-renders the feed without re-running inference.
- * A label with no dictionary entry, if one is ever passed in, falls back to the raw label.
+ * "Hint?" under the flashcard, as wide as the card (w-0 + min-w-full: it never widens the column).
+ * Pressing it — mouse, or holding a fingertip over it — shows the word's English with all but a
+ * few random letters starred out, for the rest of the round.
+ */
+function HintBox({ word }: { word: Word }) {
+  const [hint, setHint] = useState<string | null>(null);
+  const box = "font-toon w-0 min-w-full rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] px-3 py-1 text-center text-lg font-semibold leading-tight text-[#1d1b16] shadow-[3px_4px_0_rgba(0,0,0,0.45)]";
+  if (hint !== null) {
+    return (
+      <div data-testid="hint" data-shown="true" lang="en" className={box}>
+        <span className="font-hand text-base font-normal text-[#1d1b16]/70">Hint: </span>
+        <span data-testid="hint-word" className="break-words tracking-[0.15em]">{hint}</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid="hint"
+      data-shown="false"
+      data-hand-target
+      onClick={() => setHint(maskWord(word.en))}
+      className={`${box} pointer-events-auto cursor-pointer transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff3c4] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff3c4]`}
+    >
+      Hint?
+    </button>
+  );
+}
+
+/**
+ * Live feed of the classifier's top guesses, in the language being learnt.
+ * Every guess is a flashcard word and carries its dictionary entry (see quickdraw/guesses.ts), so
+ * there is no label lookup here that could miss and show English. Translation happens at render
+ * time — switching language re-renders the feed without re-running inference.
  */
 export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; lang: LangCode }) {
   return (
@@ -83,8 +118,7 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
       ) : (
         <ol className="flex flex-col gap-1">
           {guesses.map((g, i) => {
-            const word = wordForLabel(g.label);
-            const translated = word ? word.t[lang] : g.label;
+            const translated = translate(g.word, lang);
             return (
               <li
                 key={g.label}

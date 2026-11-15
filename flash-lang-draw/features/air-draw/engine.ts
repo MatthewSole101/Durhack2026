@@ -2,7 +2,8 @@
 // Framework-free on purpose — AirDraw.tsx owns the DOM and UI state, this owns the frame loop.
 //
 // Gestures (draw mode):
-//   one hand   🤏 pinch to draw · 👈 thumb left = undo · 👉 thumb right = redo
+//   one hand   🤏 pinch to draw (open the fingers, or close the hand into a fist, to stop)
+//              👈 thumb left = undo · 👉 thumb right = redo
 //              ✋ hold an open palm still for the colour wheel
 //   two hands  line (pinch both at once) · rectangle (an L with each hand; the L corners are
 //              opposite corners) · circle (make an O with both hands — index tips together on
@@ -18,11 +19,11 @@ import type { HandLandmarker, HandLandmarkerResult, NormalizedLandmark } from "@
 import { withWasmLoadLock } from "@/features/wasm-load-lock";
 import {
   ACTION_COOLDOWN_MS, CIRCLE_ARM_MS, CIRCLE_HOLE, CIRCLE_TOUCH, CIRCLE_SEGMENTS, CLAP_APART, CLAP_COAST_MS, CLAP_COOLDOWN_MS, CLAP_MS,
-  CLAP_SPEED, CLAP_TOGETHER, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON,
-  HAND_MATCH, HAND_MEMORY_MS, LINE_ARM_MS, LINE_STILL, LINE_SYNC_MS, PINCH_START_SPEED, MIN_HAND_DETECTION, MIN_HAND_PRESENCE, MIN_TRACKING, MODEL_URL,
+  CLAP_ALIKE, CLAP_CLOSING_MS, CLAP_SPEED, CLAP_TOGETHER, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON, FOLD_MAX,
+  HAND_MATCH, HAND_MEMORY_MS, HAND_SETTLE_MS, LINE_ARM_MS, LINE_STILL, LINE_SYNC_MS, PINCH_START_SPEED, MIN_HAND_DETECTION, MIN_HAND_PRESENCE, MIN_TRACKING, MODEL_URL,
   PALETTE, PEN_BRIDGE, PEN_COLOR, PEN_DOWN_MS, PEN_SIZE, PEN_UP_MS, PINCH_MIN_INDEX, PINCH_OFF, PINCH_ON,
-  RECT_HOLD_MS, RECT_MIN_GAP, SHAPE_COOLDOWN_MS, SNAP_COOLDOWN_MS, SNAP_DISCARD_MS, SNAP_HEARD_MS, SNAP_OPEN, SNAP_PREP_MS,
-  SNAP_READY, SNAP_REACH, SNAP_RELEASE_MS, SNAP_SYNC_MS, SHAPE_MIN_PX, SHAPE_RELEASE_MS, SQUARE_SNAP, THUMB_AXIS_DEG,
+  RECT_HOLD_MS, RECT_MIN_GAP, SHAPE_COOLDOWN_MS, SNAP_AFTER_PINCH_MS, SNAP_COOLDOWN_MS, SNAP_DISCARD_MS, SNAP_HEARD_MS, SNAP_OPEN, SNAP_PREP_MS,
+  SNAP_READY, SNAP_REACH, SNAP_RELEASE_MS, SNAP_SETUP_MAX_MS, SNAP_SYNC_MS, SHAPE_MIN_PX, SHAPE_RELEASE_MS, SQUARE_SNAP, THUMB_AXIS_DEG,
   THUMB_CLOSED, THUMB_HOLD_MS, THUMB_OPEN, THUMB_AFTER_PINCH_MS, THUMB_POINT_EXT, THUMB_REARM_MS, WASM_BASE,
   WHEEL_HOLD_MS, WHEEL_PICK_MS, WHEEL_RING_MS, WHEEL_SPAN_DEG, WHEEL_STILL, WHEEL_UPRIGHT_DEG,
 } from "./constants";
@@ -41,9 +42,11 @@ type Slot = {
   lm: NormalizedLandmark[]; // latest landmarks (the remembered ones while not live)
   live: boolean; // seen in the latest frame
   lastSeen: number;
+  liveSince: number; // start of the current unbroken run of frames it was seen in
   wrist: Pt; vel: Pt; // video px, px per ms (for re-matching after a dropout)
   palm: number; // wrist → middle knuckle, video px (3D), smoothed
   ext: Record<Finger, boolean>; curled: Record<Finger, boolean>; thumbIn: boolean;
+  fold: { index: number; middle: number }; // how far the finger is folded into the palm (see FOLD_MAX), smoothed
   othersOpen: number; // how many of middle / ring / pinky are extended
   pinched: boolean; pinchSince: number; pinchGap: number; // smoothed thumb ↔ index gap ÷ palm
   penRaw: Pt; penSpeed: number; analysedAt: number; // unfiltered pinch point, how fast it moves (palms / s)
@@ -67,8 +70,9 @@ type Slot = {
 };
 type Wheel = { slot: Slot; theta: number; at: number; idx: number; fistSince: number; center: Pt; radius: number };
 type Shape = { kind: ShapeKind; a: Slot; b: Slot; pts: Pt[]; handles: Pt[]; offSince: number | null };
-// 👏 the two hands in view: how far apart their palms are (÷ palm) and how fast that is closing (palms / s)
-type Clap = { a: Slot; b: Slot; gap: number; speed: number; at: number };
+// 👏 the two hands in view: how far apart their palms are (÷ palm), how fast that is closing
+// (palms / s), and since when it has been closing fast without a break (null = it isn't)
+type Clap = { a: Slot; b: Slot; gap: number; speed: number; at: number; closingSince: number | null };
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): a mock landmarker can be injected and state is observable.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
@@ -159,8 +163,8 @@ function lCorner(f: Fit, lm: NormalizedLandmark[], palm: number): Pt {
 function newSlot(lm: NormalizedLandmark[], wrist: Pt, t: number): Slot {
   const none = { index: false, middle: false, ring: false, pinky: false };
   return {
-    lm, live: true, lastSeen: t, wrist, vel: [0, 0], palm: 0,
-    ext: { ...none }, curled: { ...none }, thumbIn: false, othersOpen: 0,
+    lm, live: true, lastSeen: t, liveSince: t, wrist, vel: [0, 0], palm: 0,
+    ext: { ...none }, curled: { ...none }, thumbIn: false, fold: { index: NaN, middle: NaN }, othersOpen: 0,
     pinched: false, pinchSince: 0, pinchGap: NaN, penRaw: [0, 0], penSpeed: Infinity, analysedAt: 0, inkQueue: [], openSince: -1e9, openFor: Infinity, penBlocked: false,
     pen: [0, 0], penF: filterPair(), tips: { thumb: [0, 0], index: [0, 0] }, arc: [0, 0], arcF: filterPair(), cupped: false, corner: [0, 0], cornerF: filterPair(),
     stroke: null, strokePinch: 0, strokeBorn: 0,
@@ -430,12 +434,13 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     inkKey = "";
     onStrokes?.("settled");
   }
-  function clearAll() {
+  /** `by`: what cleared it (👏 clap, 🫰 snap, ✨ the C key), shown in the toast so a clear is never a mystery. */
+  function clearAll(by = "✨") {
     slots.forEach(endStroke);
     if (!strokes.length) return;
     record({ type: "clear", saved: strokes.splice(0) });
     inkKey = "";
-    toast("✨ Cleared");
+    toast(`${by} Cleared`);
     onStrokes?.("settled");
   }
   function reset() {
@@ -476,10 +481,12 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
       taken.add(i); slotOf.set(j, slots[i]);
     }
 
+    const wasLive = new Set(slots.filter(s => s.live));
     for (const s of slots) s.live = false;
     dets.forEach((det, j) => {
       const s = slotOf.get(j);
       if (!s) { slots.push(newSlot(det.lm, det.wrist, t)); return; }
+      if (!wasLive.has(s)) s.liveSince = t; // back after a dropout: a new run
       const dt = Math.max(t - s.lastSeen, 1), k = 0.5;
       s.vel = [s.vel[0] + ((det.wrist[0] - s.wrist[0]) / dt - s.vel[0]) * k, s.vel[1] + ((det.wrist[1] - s.wrist[1]) / dt - s.vel[1]) * k];
       Object.assign(s, { lm: det.lm, wrist: det.wrist, lastSeen: t, live: true });
@@ -539,10 +546,21 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     s.penRaw = penRaw; s.analysedAt = t;
     const indexEnd = P(7).map((v, i) => (v + indexTip[i]) / 2) as Pt3;
     const gap = segmentGap(thumbTip, indexEnd, indexTip) / palm;
-    s.pinchGap = Number.isFinite(s.pinchGap) ? s.pinchGap + (gap - s.pinchGap) * ease(t - prevAnalysed, 40) : gap;
+    const smooth = ease(t - prevAnalysed, 40);
+    s.pinchGap = Number.isFinite(s.pinchGap) ? s.pinchGap + (gap - s.pinchGap) * smooth : gap;
+    // how far the index and middle fingers are folded into the palm: fingertip ↔ knuckle over the
+    // length of the first segment (straight ≈ 2, bent for a pinch ≈ 1.1–1.5, in a fist ≈ 0.6–0.8)
+    for (const k of ["index", "middle"] as const) {
+      const [pip, tip] = FINGERS[k], mcp = P(pip - 1);
+      const raw = dist(P(tip), mcp) / (dist(P(pip), mcp) || 1);
+      s.fold[k] = Number.isFinite(s.fold[k]) ? s.fold[k] + (raw - s.fold[k]) * smooth : raw;
+    }
+    // ✊ a closed hand is not a pinch, however close the thumb is to the index finger it rests on:
+    // closing the hand stops the pen
+    const indexFolded = s.fold.index < FOLD_MAX;
     if (s.pinched) {
-      if (s.pinchGap > PINCH_OFF) { s.pinched = false; s.openSince = t; s.openFor = 0; }
-    } else if (s.pinchGap < PINCH_ON && sc.index > PINCH_MIN_INDEX // a fist's thumb rests on a curled index
+      if (s.pinchGap > PINCH_OFF || indexFolded) { s.pinched = false; s.openSince = t; s.openFor = 0; }
+    } else if (s.pinchGap < PINCH_ON && !indexFolded && sc.index > PINCH_MIN_INDEX // a fist's thumb rests on a curled index
       && s.penSpeed < PINCH_START_SPEED && dist(thumbTip, P(12)) > dist(thumbTip, indexTip)) {
       s.pinched = true;
       if (s.openFor >= PEN_UP_MS) { s.pinchSince = t; s.inkQueue = []; } // a re-pinch inside the grace period is the same pinch
@@ -574,9 +592,12 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     // the depth estimate is too noisy for this), not pinching the index, and the middle fingertip
     // held out in front of the palm. That last part tells it apart from a fist, where the tucked
     // thumb also touches the middle finger but the fingertip is folded into the palm.
+    // Not from a hand that has only just appeared (a face or sleeve mistaken for a hand, in any
+    // pose, for a few frames), nor straight out of a pinch (the hand is closing after drawing).
     const midEnd = Math.min(dist2(thumbTip, P(12)), dist2(thumbTip, P(11))) / palm;
     const ready = !s.pinched && midEnd < SNAP_READY && midEnd < dist2(thumbTip, indexTip) / palm
-      && dist(wrist, P(12)) / palm > SNAP_REACH;
+      && dist(wrist, P(12)) / palm > SNAP_REACH && s.fold.middle >= FOLD_MAX
+      && s.openFor >= SNAP_AFTER_PINCH_MS && t - s.liveSince >= HAND_SETTLE_MS;
     if (ready) {
       if (!s.snapArmed) { s.snapArmed = true; s.snapReadySince = t; }
       s.snapReadyAt = t;
@@ -666,7 +687,9 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     if (mode !== "draw" || shape || wheel || now < actionBlockUntil || now - lastSnapT < SNAP_COOLDOWN_MS) return;
     const snapped = slots.some(s => mic === "on"
       ? snapSounds.some(ta => Math.abs(ta - s.snapReleasedAt) <= SNAP_SYNC_MS
-        || (s.snapReadyAt >= ta - SNAP_HEARD_MS && s.snapReadyAt <= ta + 50)) // ready right up to the sound
+        // ready right up to the sound — and not for long before it: a hand resting in that pose
+        // while something in the room clicks isn't snapping
+        || (s.snapReadyAt >= ta - SNAP_HEARD_MS && s.snapReadyAt <= ta + 50 && ta - s.snapReadySince <= SNAP_SETUP_MAX_MS))
       : now - s.snapReleasedAt <= SNAP_SYNC_MS && s.snapHeld >= SNAP_PREP_MS);
     if (!snapped) return;
     lastSnapT = now;
@@ -677,7 +700,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
       // ink started just now came from the fingers getting into position, not from drawing
       if (s.stroke && now - s.strokeBorn < SNAP_DISCARD_MS) discardStroke(s);
     }
-    clearAll();
+    clearAll("🫰");
   }
 
   function setMic(st: MicState) {
@@ -701,20 +724,29 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
   // Two open hands that were apart (CLAP_APART) come together within CLAP_MS. "Together" is seen
   // either as the palms meeting (CLAP_TOGETHER), or — because hands that touch often merge into
   // one detection, or blur away on the way in — as a hand vanishing while the two were closing
-  // fast enough to have met within CLAP_COAST_MS. Judged by sight alone: the microphone is not used.
+  // fast enough, for long enough (CLAP_CLOSING_MS), to have met within CLAP_COAST_MS.
+  // Judged by sight alone: the microphone is not used.
   // Hands drifting together slowly, fists, and hands that are pinching (drawing) don't count.
+  // Nor does anything that isn't plainly a pair of hands: both must have been tracked without a
+  // break for HAND_SETTLE_MS and look about the same size (CLAP_ALIKE). A face or a sleeve
+  // mistaken for a hand shows up next to the drawing hand for a few frames, jumps and is gone —
+  // which would otherwise read as a hand rushing in and vanishing.
   function updateClap(f: Fit, t: number) {
     const live = slots.filter(s => s.live);
     const prev = clap;
     clap = null;
     if (live.length === 2) {
       const [a, b] = live;
+      const pair = t - a.liveSince >= HAND_SETTLE_MS && t - b.liveSince >= HAND_SETTLE_MS
+        && Math.min(a.palm, b.palm) >= CLAP_ALIKE * Math.max(a.palm, b.palm);
       const gap = dist2(palmCentre(f, a.lm), palmCentre(f, b.lm)) * f.vw / ((a.palm + b.palm) / 2);
       const same = prev && t > prev.at && ((prev.a === a && prev.b === b) || (prev.a === b && prev.b === a));
-      clap = { a, b, gap, speed: same ? (prev.gap - gap) / (t - prev.at) * 1000 : 0, at: t };
-      if (gap > CLAP_APART && a.flat && b.flat) clapWoundAt = t;
-      if (gap < CLAP_TOGETHER) tryClap(t);
-    } else if (prev && live.length < 2 && prev.speed >= CLAP_SPEED
+      const speed = same ? (prev.gap - gap) / (t - prev.at) * 1000 : 0;
+      const closingSince = same && pair && speed >= CLAP_SPEED ? prev.closingSince ?? prev.at : null;
+      clap = { a, b, gap, speed, at: t, closingSince };
+      if (pair && gap > CLAP_APART && a.flat && b.flat) clapWoundAt = t;
+      if (pair && gap < CLAP_TOGETHER) tryClap(t);
+    } else if (prev && live.length < 2 && prev.closingSince !== null && prev.at - prev.closingSince >= CLAP_CLOSING_MS
       && (prev.gap - CLAP_TOGETHER) / prev.speed * 1000 <= CLAP_COAST_MS) tryClap(t);
   }
 
@@ -728,7 +760,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     shapeBlockUntil = Math.max(shapeBlockUntil, t + SHAPE_COOLDOWN_MS);
     resetArming();
     for (const s of slots) { s.thumbFired = true; s.still = null; s.snapArmed = false; }
-    clearAll();
+    clearAll("👏");
   }
 
   // ---------------- colour wheel ----------------

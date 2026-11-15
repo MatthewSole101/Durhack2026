@@ -11,15 +11,36 @@
 // Japanese is in kana (beginner-friendly), so homophones share a spelling (はな: flower, nose).
 // Yoruba is written with tone marks; modern objects are loanwords or descriptive phrases.
 
+import { labelKey } from "@/features/quickdraw/labels";
 import type { LangCode } from "./languages";
 
 export type Word = { id: string; en: string; labels: readonly string[]; t: Record<LangCode, string> };
 
-/** Quick Draw label → the flashcard word it counts as. */
+/** Quick Draw label (in canonical form: see labelKey) → the flashcard word it counts as. */
 const WORD_BY_LABEL = new Map<string, Word>();
 
-/** The flashcard word a classifier label belongs to, or undefined when the dictionary has no entry. */
-export const wordForLabel = (label: string): Word | undefined => WORD_BY_LABEL.get(label);
+/**
+ * The flashcard word a classifier label belongs to, or undefined when it is not a flashcard word.
+ * Matched on the canonical form of the label, so case, spacing and underscores don't matter.
+ */
+export const wordForLabel = (label: string): Word | undefined => WORD_BY_LABEL.get(labelKey(label));
+
+const warnedFallback = new Set<string>();
+
+/**
+ * The word in the language being learnt. Every word has every language (the tests check all of
+ * them), so the English fallback should never be reached; if it is, say so in dev instead of
+ * quietly showing English.
+ */
+export function translate(word: Word, lang: LangCode): string {
+  const text: string | undefined = word.t[lang];
+  if (text?.trim()) return text;
+  if (process.env.NODE_ENV !== "production" && !warnedFallback.has(`${word.id}/${lang}`)) {
+    warnedFallback.add(`${word.id}/${lang}`);
+    console.warn(`No "${lang}" translation for the word "${word.id}": showing its English ("${word.en}") instead.`);
+  }
+  return word.en;
+}
 
 // prettier-ignore
 export const WORDS: Word[] = [
@@ -239,4 +260,4 @@ export const WORDS: Word[] = [
   { id: "wine-glass", en: "wine glass", labels: ["wine glass"], t: { es: "la copa de vino", uk: "келих для вина", pl: "kieliszek do wina", id: "gelas anggur", te: "వైన్ గ్లాసు", yo: "ife wáìnì", ja: "ワイングラス" } },
 ];
 
-for (const w of WORDS) for (const label of w.labels) WORD_BY_LABEL.set(label, w);
+for (const w of WORDS) for (const label of w.labels) WORD_BY_LABEL.set(labelKey(label), w);

@@ -44,11 +44,11 @@ mirroring and device pixel ratio.
               toProbabilities(out)
           pass through if ≥0 and |Σ−1|≤0.05, else softmax(max-subtracted)
                         ▼
-              topK(probs, labels, TOP_K=5)                    → guesses
-              topK(probs, labels, TOP_K=5, isWord)            → wordGuesses
-          pair prob↔labels[i] → (keep flashcard words) → sort desc → slice(0,5)
+              rank(probs)             (guesses.ts, createRanker(labels))   → guesses
+          pair prob↔labels[i] → drop classes that are not flashcard words
+          → ÷ validMass (Σ of what is left) → sort desc → slice(0, TOP_K=5)
                         ▼
-        onPrediction({ guesses: Guess[], wordGuesses: Guess[], input: Float32Array|null })
+        onPrediction({ guesses: Guess[], input: Float32Array|null })
           (generation-checked, then consumed by the caller)
 ```
 
@@ -216,18 +216,32 @@ All of the above knobs live in `features/quickdraw/constants.ts` and are fixed (
   sum is within 0.05 of 1, it is already probabilities and passes through. Otherwise it is
   treated as **logits** and softmaxed with max-subtraction for numerical stability
   (`exp(v − max) / Σ exp`).
-- **`topK(probs, labels, k = TOP_K, keep?)`** (`model.ts`, `TOP_K = 5`): pairs each probability with
-  `labels[i]` (falling back to `` `class ${i}` `` if the label list were short), sorts
-  descending by `prob`, and slices the best 5 into `Guess[] = { label: string; prob: number }[]`.
-  With a `keep` predicate, only the classes it accepts are ranked; probabilities are not
-  renormalised.
-- The game ranks each output twice (`AirDraw.tsx`): `guesses` over all 345 classes (the debug
-  panel, and the win check) and `wordGuesses` over the 214 classes that are flashcard words (the
-  "You drew…" feed, so it never lists a class the game has no word for). The predictor wraps both as
-  `Prediction = { guesses: Guess[]; wordGuesses: Guess[]; input: Float32Array | null }` — carrying the exact
-  784-value tensor alongside so consumers can render "what the model saw" — and delivers it to
-  `onPrediction` only if the generation is still current. `guesses[0]` (label + confidence) is
-  the top prediction consumers act on.
+- **`createRanker(labels)` → `rank(probs, k = TOP_K)`** (`guesses.ts`, `TOP_K = 5`): the single
+  post-processing step, used by `model.predict()`. The label list is never filtered or
+  reordered, so output index `i` always means `labels[i]`. When the ranker is built it resolves,
+  once, which indices are flashcard words (`wordForLabel`, matched on the canonical form of the
+  label: `labelKey` in `labels.ts` — trimmed, lowercase, spaces / underscores / hyphens unified).
+  Each call then:
+  1. **prunes**: only those 214 indices are considered; the other 131 classes are dropped
+     *before* ranking;
+  2. **re-normalises**: `validMass = Σ probs[i]` over the surviving classes, and each one's score
+     becomes `probs[i] / validMass`, so the surviving distribution sums to 1 (if `validMass` is
+     0 or not a number there is nothing to rank and the result is `[]`);
+  3. sorts descending and slices the best 5 into
+     `Guess[] = { label: string; prob: number; word: Word }[]` — `label` is the model's class
+     name, `word` the flashcard entry it resolved to.
+- There is one list. The predictor wraps it as
+  `Prediction = { guesses: Guess[]; input: Float32Array | null }` — carrying the exact 784-value
+  tensor alongside so consumers can render "what the model saw" — and delivers it to
+  `onPrediction` only if the generation is still current. The win check (`guesses[0]` is the
+  word; `PREDICT_CONFIDENCE_THRESH` is 0, so its score doesn't matter), the "You drew…" feed and
+  the debug panel all read it, so
+  `prob` everywhere is a share of the flashcard classes' probability, not of all 345.
+  `model.probabilities()` still returns the raw 345-class output (used by the parity test).
+- **Translation**: the feed shows `translate(guess.word, lang)` (`languages/words.ts`). Because
+  the guess carries its word, there is no label lookup at render time that could miss. If a
+  word ever lacks a translation, `translate` falls back to its English and logs a dev-only
+  warning; `createRanker` likewise warns in dev about a flashcard word with no model class.
 
 ### Key inference files
 
@@ -236,8 +250,9 @@ All of the above knobs live in `features/quickdraw/constants.ts` and are fixed (
 | `features/quickdraw/constants.ts` | Every inference knob: asset URLs, `INPUT_SIZE`/`RENDER_SIZE`/`MID_SIZE`/`LINE_WIDTH`/`PADDING`/`MIN_SPAN`, `CENTER`/`INVERT`, `TOP_K`, `PREDICT_THROTTLE_MS`, `MIN_MODEL_BYTES`. |
 | `features/quickdraw/runtime.ts` | Singleton LiteRT.js wasm runtime loader. |
 | `features/quickdraw/flatbuffer.ts` | In-place `-1` → `1` batch-dim FlatBuffer patch. |
-| `features/quickdraw/labels.ts` | 345-class label list, `labels.txt` parsing, built-in fallback. |
-| `features/quickdraw/model.ts` | Fetch/validate/compile, `run` with wasm cleanup, `toProbabilities`, `topK`, `dispose`. |
+| `features/quickdraw/labels.ts` | 345-class label list, `labels.txt` parsing, built-in fallback, `labelKey` (canonical label form). |
+| `features/quickdraw/model.ts` | Fetch/validate/compile, `run` with wasm cleanup, `toProbabilities`, `predict`, `dispose`. |
+| `features/quickdraw/guesses.ts` | Post-processing: prune to the flashcard words, re-normalise, top-K (`createRanker`). |
 | `features/quickdraw/preprocess.ts` | Vector strokes → normalized 28×28 `Float32Array` (or `null`). |
 | `features/quickdraw/predictor.ts` | Trigger routing, 120 ms throttle, serialization + generation guards. |
 | `features/air-draw/engine.ts` | Source of the snapshot: `getStrokes()` export and `onStrokes("drawing"/"settled")` events. |
