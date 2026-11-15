@@ -44,10 +44,11 @@ mirroring and device pixel ratio.
               toProbabilities(out)
           pass through if ≥0 and |Σ−1|≤0.05, else softmax(max-subtracted)
                         ▼
-              topK(probs, labels, TOP_K=5)
-          pair prob↔labels[i] → sort desc → slice(0,5)
+              topK(probs, labels, TOP_K=5)                    → guesses
+              topK(probs, labels, TOP_K=5, isWord)            → wordGuesses
+          pair prob↔labels[i] → (keep flashcard words) → sort desc → slice(0,5)
                         ▼
-        onPrediction({ guesses: Guess[], input: Float32Array|null })
+        onPrediction({ guesses: Guess[], wordGuesses: Guess[], input: Float32Array|null })
           (generation-checked, then consumed by the caller)
 ```
 
@@ -215,11 +216,15 @@ All of the above knobs live in `features/quickdraw/constants.ts` and are fixed (
   sum is within 0.05 of 1, it is already probabilities and passes through. Otherwise it is
   treated as **logits** and softmaxed with max-subtraction for numerical stability
   (`exp(v − max) / Σ exp`).
-- **`topK(probs, labels, k = TOP_K)`** (`model.ts`, `TOP_K = 5`): pairs each probability with
+- **`topK(probs, labels, k = TOP_K, keep?)`** (`model.ts`, `TOP_K = 5`): pairs each probability with
   `labels[i]` (falling back to `` `class ${i}` `` if the label list were short), sorts
   descending by `prob`, and slices the best 5 into `Guess[] = { label: string; prob: number }[]`.
-- `predict` resolves to that array; the predictor wraps it as
-  `Prediction = { guesses: Guess[]; input: Float32Array | null }` — carrying the exact
+  With a `keep` predicate, only the classes it accepts are ranked; probabilities are not
+  renormalised.
+- The game ranks each output twice (`AirDraw.tsx`): `guesses` over all 345 classes (the debug
+  panel, and the win check) and `wordGuesses` over the 284 classes that are flashcard words (the
+  "You drew…" feed, so it never lists a class the game has no word for). The predictor wraps both as
+  `Prediction = { guesses: Guess[]; wordGuesses: Guess[]; input: Float32Array | null }` — carrying the exact
   784-value tensor alongside so consumers can render "what the model saw" — and delivers it to
   `onPrediction` only if the generation is still current. `guesses[0]` (label + confidence) is
   the top prediction consumers act on.

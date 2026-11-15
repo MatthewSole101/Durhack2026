@@ -62,8 +62,10 @@ export function toProbabilities(out: Float32Array): Float32Array {
   return exp.map(v => v / total);
 }
 
-export function topK(probs: ArrayLike<number>, labels: readonly string[], k = TOP_K): Guess[] {
-  return Array.from(probs, (prob, i) => ({ label: labels[i] ?? `class ${i}`, prob }))
+/** The k most likely classes, best first. With `keep`, only the classes it accepts are ranked. */
+export function topK(probs: ArrayLike<number>, labels: readonly string[], k = TOP_K, keep?: (label: string) => boolean): Guess[] {
+  const all = Array.from(probs, (prob, i) => ({ label: labels[i] ?? `class ${i}`, prob }));
+  return (keep ? all.filter(g => keep(g.label)) : all)
     .sort((a, b) => b.prob - a.prob)
     .slice(0, k);
 }

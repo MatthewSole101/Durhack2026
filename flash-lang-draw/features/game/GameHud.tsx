@@ -8,7 +8,6 @@ import { INPUT_SIZE } from "@/features/quickdraw/constants";
 import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
 import type { LangCode } from "@/features/languages/languages";
-import { labelIn } from "@/features/languages/label-words";
 import { wordForLabel, type Word } from "@/features/languages/words";
 
 export type ClassifierStatus =
@@ -32,7 +31,7 @@ export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; s
       >
         <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
           {solved && <span aria-hidden>✓ </span>}
-          <span lang={lang} data-testid="word">{word.text[lang]}</span>
+          <span lang={lang} data-testid="word">{word.t[lang]}</span>
         </div>
       </div>
     </div>
@@ -40,9 +39,11 @@ export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; s
 }
 
 /**
- * Live feed of the classifier's top guesses, in the language being learnt (every Quick Draw
- * class has an entry in label-words.ts). Translation happens here, at render time, from the raw
- * predicted labels, so switching language re-renders the feed without re-running inference.
+ * Live feed of the classifier's top guesses, translated into the language being learnt.
+ * It is given the guesses among the flashcard words only (Prediction.wordGuesses), so classes
+ * the dictionary doesn't cover never show up. Translation happens here, at render time, from
+ * the predicted labels — switching language re-renders the feed without re-running inference.
+ * A label with no dictionary entry, if one is ever passed in, falls back to the raw label.
  */
 export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; lang: LangCode }) {
   return (
@@ -59,7 +60,8 @@ export function GuessFeed({ guesses, lang }: { guesses: Prediction["guesses"]; l
       ) : (
         <ol className="flex flex-col gap-1">
           {guesses.map((g, i) => {
-            const translated = labelIn(g.label, lang) ?? wordForLabel(g.label)?.text[lang] ?? g.label;
+            const word = wordForLabel(g.label);
+            const translated = word ? word.t[lang] : g.label;
             return (
               <li
                 key={g.label}

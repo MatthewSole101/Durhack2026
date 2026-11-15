@@ -215,7 +215,7 @@ export const langButton = (page: Page, name: RegExp) => page.getByRole("button",
 
 /** A flashcard for tests: the same text in every language, won by the given Quick Draw classes. */
 export function testWord(id: string, ...labels: string[]): Word {
-  return { id, en: id, labels, text: { es: id, ru: id, pl: id, id, ja: id, ko: id } };
+  return { id, en: id, labels, t: { es: id, ru: id, pl: id, id: id, te: id, yo: id, ja: id } };
 }
 
 export function trackErrors(page: Page) {
