@@ -59,7 +59,11 @@ export default function HandCursor({ ref, targetsOnly = false }: { ref?: Ref<Han
     if (el === s.target) return;
     s.target?.removeAttribute("data-hand-hover");
     el?.setAttribute("data-hand-hover", "");
-    s.target = el; s.since = performance.now(); s.fired = false;
+    // a `data-hand-after-leave` target that turns up under a finger which just pressed something
+    // (e.g. the "How to draw ?" pill, where the hidden cheat-sheet was) waits for the finger to leave
+    const carry = s.fired && !!el?.hasAttribute("data-hand-after-leave");
+    s.target = el; s.since = performance.now(); s.fired = carry;
+    if (carry && rootRef.current) { showProgress(0); rootRef.current.dataset.state = "idle"; }
     const code = el?.dataset.handFlag;
     setFlag(isLang(code) ? code : null);
   }

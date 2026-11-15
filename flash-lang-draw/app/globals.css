@@ -92,18 +92,18 @@ body {
   to { opacity: 0; }
 }
 
-/* doodles: strokes draw in, label drops in, then the whole card floats */
+/* doodles: the drawing wipes in left to right, label drops in, then the card sways gently
+   (FloatingDoodles.tsx moves it around the screen) */
 .lt-doodle {
-  transform: translate(-50%, -50%) rotate(var(--rot));
+  transform: rotate(var(--rot));
   animation: lt-float var(--float) ease-in-out calc(var(--delay) + 1.4s) infinite;
 }
-.lt-doodle-svg {
-  filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.45));
+.lt-doodle-img {
+  clip-path: inset(0 100% 0 0);
+  animation: lt-wipe 1.2s ease-in-out var(--delay) forwards;
 }
-.lt-doodle-svg > * {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: lt-draw 1.2s ease-in-out var(--delay) forwards;
+@keyframes lt-wipe {
+  to { clip-path: inset(0 0 0 0); }
 }
 .lt-doodle-label {
   opacity: 0;
@@ -132,15 +132,16 @@ body {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes lt-float {
-  0%, 100% { transform: translate(-50%, -50%) rotate(var(--rot)); }
-  33% { transform: translate(calc(-50% + 10px), calc(-50% - 14px)) rotate(calc(var(--rot) + 5deg)); }
-  66% { transform: translate(calc(-50% - 8px), calc(-50% + 8px)) rotate(calc(var(--rot) - 4deg)); }
+  0%, 100% { transform: rotate(var(--rot)); }
+  33% { transform: rotate(calc(var(--rot) + 5deg)); }
+  66% { transform: rotate(calc(var(--rot) - 4deg)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .lt-letter, .lt-doodle { animation: none; }
   .lt-letter { transform: rotate(var(--tilt)); }
-  .lt-scribble, .lt-doodle-svg > * { animation: none; stroke-dashoffset: 0; }
+  .lt-scribble { animation: none; stroke-dashoffset: 0; }
+  .lt-doodle-img { animation: none; clip-path: none; }
   .lt-doodle-label { animation: none; opacity: 1; }
   .lt-paper-go .lt-paper-left, .lt-paper-go .lt-paper-right { animation: none; }
   .lt-paper-go { animation: lt-paper-fade 0.4s ease-out forwards; }
@@ -150,8 +151,4 @@ body {
 }
 @media (max-width: 767px) {
   .lt-doodle { scale: 0.7; }
-}
-/* short phones/tablets: the content fills the whole height, so there's no empty space for doodles */
-@media (max-width: 1023px) and (max-height: 759px) {
-  .lt-doodle { display: none; }
 }

@@ -156,14 +156,14 @@ test.describe("labels and scoring", () => {
   });
 
   test("every word is translated into every language on the start screen", () => {
-    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "uk", "pl", "id", "te", "yo", "ja"]);
+    expect(LANGUAGES.map(l => l.code)).toEqual(["es", "uk", "pl", "id", "yo", "ja"]);
     for (const w of WORDS) {
       expect(Object.keys(w.t).sort(), w.id).toEqual(LANGUAGES.map(l => l.code).sort());
       for (const l of LANGUAGES) expect(w.t[l.code].trim(), `${w.id}.${l.code}`).not.toBe("");
     }
     const sun = WORDS.find(w => w.id === "sun")!;
     expect(sun.id).toBe("sun"); // the word's id, not its Indonesian translation
-    expect(sun.t).toEqual({ es: "el sol", uk: "сонце", pl: "słońce", id: "matahari", te: "సూర్యుడు", yo: "oòrùn", ja: "たいよう" });
+    expect(sun.t).toEqual({ es: "el sol", uk: "сонце", pl: "słońce", id: "matahari", yo: "oòrùn", ja: "たいよう" });
   });
 
   test("wordForLabel maps every class of a word back to it, and misses non-dictionary labels", () => {
@@ -651,7 +651,7 @@ test.describe("game", () => {
     await page.addInitScript(installMock);
     await page.addInitScript(d => { window.__gameDeck = d; }, [testWord("zebra", "zebra")]);
     // languages in another script: any Latin letter in the feed would be an English label leaking through
-    for (const [button, code] of [[/日本語/, "ja"], [/తెలుగు/, "te"], [/Українська/, "uk"]] as const) {
+    for (const [button, code] of [[/日本語/, "ja"], [/Українська/, "uk"]] as const) {
       await page.goto("/");
       await langButton(page, button).click();
       await expect(page.getByTestId("start-screen")).toBeHidden();

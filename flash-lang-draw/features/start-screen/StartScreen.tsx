@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Flag } from "@/features/languages/Flag";
 import { LANGUAGES, type LangCode, languageByCode } from "@/features/languages/languages";
-import { DOODLES, DoodleCard } from "./doodles";
+import FloatingDoodles from "./FloatingDoodles";
 import PaperTear from "./PaperTear";
 import TitleLogo from "./TitleLogo";
 
@@ -28,6 +28,7 @@ type Props = {
  */
 export default function StartScreen({ stream, modelReady, busy, status, lang, onPick }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const [camLive, setCamLive] = useState(false);
   const [camGaveUp, setCamGaveUp] = useState(false);
   /** the opening paper has been torn away (or was already, on a later visit) */
@@ -69,9 +70,10 @@ export default function StartScreen({ stream, modelReady, busy, status, lang, on
       {/* first visit: the backdrop starts under a sheet of paper that gets torn away */}
       <PaperTear go={camLive || camGaveUp} onDone={reveal} />
 
-      {DOODLES.map(d => <DoodleCard key={d.id} d={d} dim={!!langTag && d.lang !== langTag} />)}
+      {/* drift around the empty parts of the screen, never behind the content in <main> */}
+      <FloatingDoodles avoid={mainRef} dimExcept={langTag} />
 
-      <main className="relative z-10 flex h-full flex-col items-center justify-center gap-5 px-4 text-center">
+      <main ref={mainRef} className="relative z-10 flex h-full flex-col items-center justify-center gap-5 px-4 text-center">
         <TitleLogo revealed={revealed} />
 
         <div className="flex flex-col items-center gap-2">

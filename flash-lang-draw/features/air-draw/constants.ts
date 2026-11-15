@@ -88,7 +88,7 @@ export const DWELL_MS = 1200; // how long to hover before the press fires
 export const POINTER_LOST_MS = 300; // tracking can drop a frame or two without resetting the dwell
 export const DRAW_ARM_MS = 800; // after Start, ignore the pen briefly
 
-export const HINTS_OPEN_MS = 9000; // gesture cheat-sheet stays open this long on the drawing page
+export const HINTS_OPEN_MS = 6000; // gesture cheat-sheet hides itself this long after the drawing page opens
 
 // ✋ colour wheel: hold an open palm still → wheel opens; tilt the hand to choose; fist to pick
 export const PALETTE = [ // left → right on the wheel

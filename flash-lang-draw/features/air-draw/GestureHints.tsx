@@ -1,9 +1,11 @@
 "use client";
 
-// Gesture cheat-sheet for the drawing page. Open when the page opens, tucks itself away into a
-// small "How to draw" pill after HINTS_OPEN_MS; click the pill (or press H) to bring it back.
+// Gesture cheat-sheet for the drawing page. Open when the page opens, and always tucks itself away
+// into a small "How to draw" pill after HINTS_OPEN_MS (unless it was hidden and brought back by
+// then); click the pill (or press H) to bring it back. The whole open panel is one big "hide"
+// target, for the mouse and for a fingertip held over it.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { HINTS_OPEN_MS } from "./constants";
 import { CORNER_BUTTON } from "./corner-button";
 import type { MicState } from "./snap-audio";
@@ -25,12 +27,16 @@ const ShapeIcon = ({ d }: { d: string }) => (
 
 export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
   const [open, setOpen] = useState(true);
+  /** brought back by the user after being hidden: then it stays until they hide it again */
+  const reopened = useRef(false);
+  const show = (o: boolean) => { if (o) reopened.current = true; setOpen(o); };
 
   useEffect(() => {
-    const timer = setTimeout(() => setOpen(false), HINTS_OPEN_MS);
+    // the first auto-hide always happens, even if H was pressed in the meantime
+    const timer = setTimeout(() => { if (!reopened.current) setOpen(false); }, HINTS_OPEN_MS);
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key.toLowerCase() === "h") { clearTimeout(timer); setOpen(o => !o); }
+      if (e.key.toLowerCase() === "h") setOpen(o => { if (!o) reopened.current = true; return !o; });
     };
     window.addEventListener("keydown", onKey);
     return () => { clearTimeout(timer); window.removeEventListener("keydown", onKey); };
@@ -44,17 +50,22 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
         </div>
       )}
       {open ? (
-        <div className="w-[290px] rotate-[-1deg] rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3">
+        // the whole panel hides it: hovering anywhere on it shows the hand cursor's ring, and a click
+        // anywhere (or a fingertip held over it) tucks it away. The × is the keyboard-reachable button.
+        <div
+          onClick={() => show(false)}
+          data-hand-target
+          title="Click to hide"
+          className="group w-[290px] rotate-[-1deg] cursor-pointer rounded-xl border-[3px] border-[#1d1b16] bg-[#fffdf5] p-3 transition-[translate,background-color] duration-150 hover:-translate-y-0.5 hover:bg-[#fff8de] data-[hand-hover]:-translate-y-0.5 data-[hand-hover]:bg-[#fff8de]"
+        >
           <div className="mb-1 flex items-center justify-between">
             <b className="font-toon text-sm">How to draw</b>
             <button
               type="button"
-              onClick={() => setOpen(false)}
               aria-label="Hide hints"
-              data-hand-target
-              className="font-toon -mr-1 cursor-pointer rounded-md px-2 py-1 text-base leading-none text-[#1d1b16]/60 hover:bg-[#1d1b16]/10 data-[hand-hover]:bg-[#1d1b16]/10"
+              className="font-toon -mr-1 flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold leading-none text-[#1d1b16]/60 group-hover:bg-[#1d1b16]/10 group-data-[hand-hover]:bg-[#1d1b16]/10"
             >
-              ×
+              hide <span className="text-base">×</span>
             </button>
           </div>
           <ul className="flex flex-col gap-1">
@@ -76,8 +87,9 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
       ) : (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => show(true)}
           data-hand-target
+          data-hand-after-leave
           className={CORNER_BUTTON}
         >
           How to draw ?
