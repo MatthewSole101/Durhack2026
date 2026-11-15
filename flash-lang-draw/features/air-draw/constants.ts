@@ -58,6 +58,15 @@ export const SNAP_PREP_MS = 60; // without a microphone, the ready pose must be 
 export const SNAP_COOLDOWN_MS = 1000;
 export const SNAP_DISCARD_MS = 800; // ink started this recently came from getting into position: dropped, not kept for undo
 
+// 👏 clap your hands to clear (by sight only). gap = distance between the two palm centres ÷ palm
+export const CLAP_APART = 1.6; // two open hands at least this far apart: wound up for a clap…
+export const CLAP_TOGETHER = 0.7; // …and their palms closer than this: clapped (in an O the palms stay ≈ 2 apart)…
+export const CLAP_MS = 350; // …within this long, so hands drifting together slowly don't count
+// hands that meet often merge into one detection or blur away just before they touch:
+export const CLAP_SPEED = 4; // a hand lost while the gap was closing at least this fast (palms / s)…
+export const CLAP_COAST_MS = 150; // …and would have closed within this long also counts
+export const CLAP_COOLDOWN_MS = 1000;
+
 export const TOAST_MS = 900;
 
 // start screen: buttons are pressed by holding the index fingertip over them
