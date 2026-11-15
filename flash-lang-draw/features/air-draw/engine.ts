@@ -8,7 +8,7 @@
 //              opposite corners) · circle (make an O with both hands — index tips together on
 //              top, thumb tips together underneath — then pull apart to grow it).
 //              Move the hands to place / size the shape, let go to drop it.
-//              🫰 snap your fingers to clear (seen and/or heard)
+//              👏 clap your hands, or 🫰 snap your fingers (seen and/or heard), to clear
 //
 // Each tracked hand lives in a Slot. A hand that drops out of tracking (partly off-screen,
 // motion blur) is remembered for HAND_MEMORY_MS with everything it was doing — stroke, pinch,
@@ -17,7 +17,8 @@
 import type { HandLandmarker, HandLandmarkerResult, NormalizedLandmark } from "@mediapipe/tasks-vision";
 import { withWasmLoadLock } from "@/features/wasm-load-lock";
 import {
-  ACTION_COOLDOWN_MS, CIRCLE_ARM_MS, CIRCLE_HOLE, CIRCLE_TOUCH, CIRCLE_SEGMENTS, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON,
+  ACTION_COOLDOWN_MS, CIRCLE_ARM_MS, CIRCLE_HOLE, CIRCLE_TOUCH, CIRCLE_SEGMENTS, CLAP_APART, CLAP_COAST_MS, CLAP_COOLDOWN_MS, CLAP_MS,
+  CLAP_SPEED, CLAP_TOGETHER, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON,
   HAND_MATCH, HAND_MEMORY_MS, LINE_ARM_MS, LINE_STILL, LINE_SYNC_MS, PINCH_START_SPEED, MIN_HAND_DETECTION, MIN_HAND_PRESENCE, MIN_TRACKING, MODEL_URL,
   PALETTE, PEN_BRIDGE, PEN_COLOR, PEN_DOWN_MS, PEN_SIZE, PEN_UP_MS, PINCH_MIN_INDEX, PINCH_OFF, PINCH_ON,
   RECT_HOLD_MS, RECT_MIN_GAP, SHAPE_COOLDOWN_MS, SNAP_COOLDOWN_MS, SNAP_DISCARD_MS, SNAP_HEARD_MS, SNAP_OPEN, SNAP_PREP_MS,
@@ -59,12 +60,15 @@ type Slot = {
   // 🫰 snap: thumb pressed on the middle fingertip ("ready"), then the two fly apart ("release")
   snapArmed: boolean; snapReadySince: number; snapReadyAt: number; snapReleasedAt: number; snapHeld: number;
   openPalm: boolean; fist: boolean; lPose: boolean;
+  flat: boolean; // an open hand, thumb anywhere: what a clap is made with
   thumbDir: -1 | 0 | 1; // thumb pointing left / right (on screen) out of a fist
   thumbPose: -1 | 0 | 1; thumbSince: number; thumbSeen: number; thumbFired: boolean;
   still: { x: number; y: number; t: number } | null; // where an open palm started holding still
 };
 type Wheel = { slot: Slot; theta: number; at: number; idx: number; fistSince: number; center: Pt; radius: number };
 type Shape = { kind: ShapeKind; a: Slot; b: Slot; pts: Pt[]; handles: Pt[]; offSince: number | null };
+// 👏 the two hands in view: how far apart their palms are (÷ palm) and how fast that is closing (palms / s)
+type Clap = { a: Slot; b: Slot; gap: number; speed: number; at: number };
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): a mock landmarker can be injected and state is observable.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
@@ -161,7 +165,7 @@ function newSlot(lm: NormalizedLandmark[], wrist: Pt, t: number): Slot {
     pen: [0, 0], penF: filterPair(), tips: { thumb: [0, 0], index: [0, 0] }, arc: [0, 0], arcF: filterPair(), cupped: false, corner: [0, 0], cornerF: filterPair(),
     stroke: null, strokePinch: 0, strokeBorn: 0,
     snapArmed: false, snapReadySince: -1e9, snapReadyAt: -1e9, snapReleasedAt: -1e9, snapHeld: 0,
-    openPalm: false, fist: false, lPose: false,
+    openPalm: false, fist: false, lPose: false, flat: false,
     thumbDir: 0, thumbPose: 0, thumbSince: 0, thumbSeen: -1e9, thumbFired: false,
     still: null,
   };
@@ -276,6 +280,8 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
   let lastVideoTime = -1, lastSnapT = -1e9;
   let mic: MicState = "off", snapListener: SnapListener | null = null;
   let snapSounds: number[] = []; // when snaps were heard (performance.now() clock)
+  let clap: Clap | null = null; // as of the latest frame; null unless exactly two hands were in view
+  let clapWoundAt = -1e9, lastClapT = -1e9; // last time two open hands were apart; last clap
   let penColor: string = PEN_COLOR;
   let wheel: Wheel | null = null;
   let shape: Shape | null = null;
@@ -359,7 +365,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     if (m === mode) return;
     mode = m;
     slots.forEach(endStroke);
-    slots = []; wheel = null; shape = null;
+    slots = []; wheel = null; shape = null; clap = null; clapWoundAt = -1e9;
     resetArming();
     cursorF.forEach(f => f.reset());
     if (m === "draw") startMic(); else stopMic();
@@ -554,6 +560,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     s.fist = !s.ext.index && othersCurled;
     s.lPose = s.ext.index && !s.thumbIn && othersCurled && !s.pinched; // 🫷 "L": index up, thumb out
     s.cupped = !s.pinched && !s.fist && dist(thumbTip, indexTip) / palm > CIRCLE_HOLE; // ⊂ half an O
+    s.flat = openCount >= 3 && !s.pinched;
 
     // 👈 / 👉 all four fingers curled, thumb sticking out sideways
     s.thumbDir = 0;
@@ -688,6 +695,40 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     snapListener.stop();
     snapListener = null;
     setMic("off");
+  }
+
+  // ---------------- 👏 clap to clear ----------------
+  // Two open hands that were apart (CLAP_APART) come together within CLAP_MS. "Together" is seen
+  // either as the palms meeting (CLAP_TOGETHER), or — because hands that touch often merge into
+  // one detection, or blur away on the way in — as a hand vanishing while the two were closing
+  // fast enough to have met within CLAP_COAST_MS. Judged by sight alone: the microphone is not used.
+  // Hands drifting together slowly, fists, and hands that are pinching (drawing) don't count.
+  function updateClap(f: Fit, t: number) {
+    const live = slots.filter(s => s.live);
+    const prev = clap;
+    clap = null;
+    if (live.length === 2) {
+      const [a, b] = live;
+      const gap = dist2(palmCentre(f, a.lm), palmCentre(f, b.lm)) * f.vw / ((a.palm + b.palm) / 2);
+      const same = prev && t > prev.at && ((prev.a === a && prev.b === b) || (prev.a === b && prev.b === a));
+      clap = { a, b, gap, speed: same ? (prev.gap - gap) / (t - prev.at) * 1000 : 0, at: t };
+      if (gap > CLAP_APART && a.flat && b.flat) clapWoundAt = t;
+      if (gap < CLAP_TOGETHER) tryClap(t);
+    } else if (prev && live.length < 2 && prev.speed >= CLAP_SPEED
+      && (prev.gap - CLAP_TOGETHER) / prev.speed * 1000 <= CLAP_COAST_MS) tryClap(t);
+  }
+
+  function tryClap(t: number) {
+    if (shape || wheel || t < armAt || t < actionBlockUntil || t - lastClapT < CLAP_COOLDOWN_MS || t - clapWoundAt > CLAP_MS) return;
+    lastClapT = t; clapWoundAt = -1e9;
+    snapSounds = []; // the click the microphone just heard was this clap, not a snap
+    // hands coming out of a clap aren't an undo / redo or a colour pick, and palms pressed
+    // together (index tips and thumb tips touching) would otherwise start an O
+    actionBlockUntil = Math.max(actionBlockUntil, t + ACTION_COOLDOWN_MS);
+    shapeBlockUntil = Math.max(shapeBlockUntil, t + SHAPE_COOLDOWN_MS);
+    resetArming();
+    for (const s of slots) { s.thumbFired = true; s.still = null; s.snapArmed = false; }
+    clearAll();
   }
 
   // ---------------- colour wheel ----------------
@@ -826,6 +867,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer, onSt
     trackHands(f, result.landmarks, t);
     const live = slots.filter(s => s.live);
     for (const s of live) analyse(f, s, t);
+    updateClap(f, t);
     updateShapes(t, f.vw);
     for (const s of live) act(f, s, t);
     trySnap(t);

@@ -84,6 +84,8 @@ export default function AirDraw() {
     let alive = true;
     let toastTimer: ReturnType<typeof setTimeout>;
     let solvedTimer: ReturnType<typeof setTimeout>;
+    const correctSound = new Audio("/sounds/correct.mp3");  
+    correctSound.preload = "auto";
     let model: QuickDrawModel | null = null;
     let predictor: Predictor | null = null;
     let current: Word | null = null, won = false; // the word on screen, while on the drawing page
@@ -148,6 +150,8 @@ export default function AirDraw() {
       if (!won && isCorrect(current, p.guesses[0]?.label) && p.guesses[0]?.prob > PREDICT_CONFIDENCE_THRESH) {
         won = true;
         setSolved(true);
+        correctSound.currentTime = 0;
+        correctSound.play().catch(() => { /* autoplay blocked until the first click or key press */ });
         solvedTimer = setTimeout(nextRound, SOLVED_MS);
       }
     }

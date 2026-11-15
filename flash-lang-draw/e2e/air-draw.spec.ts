@@ -90,6 +90,32 @@ test("gestures: pinch to draw, thumb undo / redo, snap to clear", async ({ page 
   expect(errors).toEqual([]);
 });
 
+test("clapping clears too, by sight alone", async ({ page }) => {
+  const errors = trackErrors(page);
+  await startDrawing(page);
+  await play(page, "pinchDraw");
+  expect(await strokeCount(page)).toBe(1);
+
+  for (const mic of ["on", "off"] as const) { // the microphone makes no difference to a clap
+    await page.evaluate(m => window.__airDraw.setMic(m), mic);
+    await play(page, "handsMeet"); // two open hands drifting together slowly…
+    await play(page, "fistBump"); // …or two fists knocked together: nothing
+    expect(await strokeCount(page)).toBe(1);
+    await play(page, "clap"); // two open hands brought together fast: cleared
+    expect(await strokeCount(page)).toBe(0);
+    expect(await lastToast(page)).toBe("✨ Cleared");
+    await play(page, "thumbLeft"); // undo the clear
+    expect(await strokeCount(page)).toBe(1);
+    expect(await lastToast(page)).toBe("↩ Restored");
+  }
+
+  // hands that meet often blur or merge into one: closing fast, then lost, is enough
+  await play(page, "clapBlurred");
+  expect(await strokeCount(page)).toBe(0);
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("the pen follows the pinch closely: open fingers stop drawing, a pad pinch draws", async ({ page }) => {
   await startDrawing(page);
   const vw = await page.evaluate(() => document.querySelector("video")!.videoWidth);
@@ -212,6 +238,7 @@ test("start screen: hand-pick a language, go back, pick another", async ({ page 
   await expect(card).toHaveAttribute("data-lang", "ru");
   // the gesture cheat-sheet is open when the drawing page opens
   await expect(page.getByTestId("gesture-hints")).toHaveAttribute("data-open", "true");
+  await expect(page.getByTestId("gesture-hints")).toContainText("clap your hands");
   await expect(page.getByTestId("gesture-hints")).toContainText("snap your fingers");
   await page.waitForFunction(() => window.__sceneDone);
   // the finger that picked was still pointing, but the pen stays up for a moment

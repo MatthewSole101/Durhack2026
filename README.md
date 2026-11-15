@@ -32,18 +32,19 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 
 | Gesture | What it does |
 |---|---|
-| ☝️ Point (index out, other fingers curled, thumb tucked) | Draw |
-| 🤏🤏 Pinch twice quickly | Undo |
-| 👋 Flick an open hand across | Clear |
+| 🤏 Pinch thumb and index together, then move | Draw |
+| 👈 Fist with the thumb pointing left | Undo |
+| 👉 Fist with the thumb pointing right | Redo |
+| 👏 Clap your hands (two open hands brought together quickly), or 🫰 snap your fingers | Clear |
 | ✋ Hold an open palm still, tilt, then make a fist | Colour wheel: tilt chooses, fist picks |
 | Both hands pinch, pull apart, let go | Straight line |
 | An "L" with each hand, pull apart, close the hands | Rectangle (snaps to a square when close) |
-| Index tips and thumb tips touching, pull apart, close | Triangle |
+| An "O" with both hands (index tips and thumb tips touching), pull apart, close | Circle |
 | Hold a fingertip over a button | Press it (start screen, back button) |
 
 ### Keys
 
-`C` clear · `Z` undo · `N` skip the word · `Esc` back to languages · `H` show/hide the gesture
+`C` clear · `Z` undo · `Shift+Z` / `Y` redo · `N` skip the word · `Esc` back to languages · `H` show/hide the gesture
 hints · `D` show/hide the debug panel (the model's top-5 guesses, the 28×28 image it is
 actually fed, and the load status).
 
@@ -144,7 +145,7 @@ The drawing is re-rendered from its vector strokes, never read back from the vis
 
 `CENTER = true` and `INVERT = false` are named constants with no UI. The model card says the
 opposite polarity (white background, black strokes). **The model card is wrong**, as measured
-below. Two-hand rectangles and triangles are fed as closed outlines.
+below. Two-hand rectangles and circles are fed as closed outlines.
 
 ### Verification
 

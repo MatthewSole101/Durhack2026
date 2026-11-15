@@ -7,7 +7,8 @@ import { useEffect, useRef } from "react";
 import { INPUT_SIZE } from "@/features/quickdraw/constants";
 import type { LabelSource } from "@/features/quickdraw/labels";
 import type { Prediction } from "@/features/quickdraw/predictor";
-import type { LangCode } from "@/features/languages/languages";
+import { Flag } from "@/features/languages/Flag";
+import { type LangCode, languageByCode } from "@/features/languages/languages";
 import { wordForLabel, type Word } from "@/features/languages/words";
 
 export type ClassifierStatus =
@@ -15,7 +16,10 @@ export type ClassifierStatus =
   | { state: "ready"; name: string; inputShape: number[]; dtype: string; labelSource: LabelSource }
   | { state: "error"; message: string };
 
-/** The flashcard prompt: what to draw, in the language being learnt (and only in that language). */
+/**
+ * The flashcard prompt: the language being learnt (flag + name), then the word to draw in it.
+ * The word is shown in that language only — no English underneath.
+ */
 export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; solved: boolean }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
@@ -25,10 +29,14 @@ export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; s
         data-word={word.id}
         data-solved={solved}
         role="status"
-        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 py-2.5 text-center text-[#1d1b16] transition-colors duration-200 ${
+        className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
           solved ? "bg-[#b9efb0]" : "bg-[#fffdf5]"
         }`}
       >
+        <div data-testid="word-card-heading" className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
+          <Flag code={lang} width={21} height={14} />
+          {languageByCode(lang).name} · {solved ? "Correct!" : "Draw this"}
+        </div>
         <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
           {solved && <span aria-hidden>✓ </span>}
           <span lang={lang} data-testid="word">{word.t[lang]}</span>

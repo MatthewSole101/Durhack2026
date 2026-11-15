@@ -60,7 +60,7 @@ export default function GestureHints({ mic = "off" }: { mic?: MicState }) {
             <Hint icon="🤏" title="Draw">pinch thumb and index together, then move</Hint>
             <Hint icon="👈" title="Undo">fist, thumb pointing left</Hint>
             <Hint icon="👉" title="Redo">fist, thumb pointing right</Hint>
-            <Hint icon="🫰" title="Clear">snap your fingers</Hint>
+            <Hint icon="👏" title="Clear">clap your hands, or 🫰 snap your fingers</Hint>
             <Hint icon="✋" title="Colour">hold an open palm still, tilt to choose, fist to pick</Hint>
           </ul>
           <div className="font-toon mb-0.5 mt-2 text-[11px] font-semibold uppercase tracking-wider text-[#1d1b16]/50">

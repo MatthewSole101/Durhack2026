@@ -76,6 +76,11 @@ export function installMock() {
   const FIST: HandSpec["ext"] = [false, false, false, false];
   // 🫰 ready to snap: thumb tip pressed on the middle fingertip, middle finger out
   const SNAP_READY: HandSpec = { ext: [false, true, false, false], thumb: [0, -190, 0] };
+  // 👏 two hands facing each other, `gap` units between their wrists (palm = 100; palm centres
+  // are 20 further apart than the wrists)
+  const pair = (h: Pick<HandSpec, "ext" | "thumb">, gap: number): HandSpec[] =>
+    [{ ...h, at: [0.5, 0.7], off: [-gap / 2, 0], mirror: true }, { ...h, at: [0.5, 0.7], off: [gap / 2, 0] }];
+  const FLAT = { ext: OPEN, thumb: "out" as Thumb };
   // a fist with the thumb straight out to the side; a right hand's thumb points right on screen
   const THUMB_SIDE: Thumb = [-150, -55, 0];
 
@@ -111,6 +116,14 @@ export function installMock() {
     snapBlurred: e => (e > 800 ? null : e < 400 ? [SNAP_READY] : e < 520 ? [] : [{ ext: FIST, thumb: [-60, -130, 0] }]),
     // a fist (tucked thumb resting on the curled middle finger) opening: not a snap
     fistOpen: e => (e > 700 ? null : [e < 400 ? { ext: FIST, thumb: "tucked" } : { ext: OPEN, thumb: "out" }]),
+    // 👏 two open hands apart, brought together in 150 ms, held for a moment, apart again
+    clap: e => (e > 650 ? null : pair(FLAT, 300 * (1 - ramp(e, 200, 150) + ramp(e, 450, 150)))),
+    // the same, but both hands are lost (blurred / merged) for the last third of the way in and the clap itself
+    clapBlurred: e => (e > 650 ? null : e >= 300 && e < 450 ? [] : pair(FLAT, e < 300 ? 300 * (1 - ramp(e, 200, 150)) : 300)),
+    // two open hands drifting together over 2.5 s and resting there: not a clap
+    handsMeet: e => (e > 3000 ? null : pair(FLAT, 300 * (1 - ramp(e, 200, 2500)))),
+    // two fists knocked together as fast as a clap: not a clap
+    fistBump: e => (e > 650 ? null : pair({ ext: FIST, thumb: "tucked" }, 300 * (1 - ramp(e, 200, 150) + ramp(e, 450, 150)))),
     // 🤏 pinched for 400 ms, then the fingers open ~1.5 cm (gap ≈ 0.5 palm) while the hand keeps moving
     pinchThenOpen: e => (e > 900 ? null : [{ ext: POINT, thumb: e < 400 ? "pinch" : [-80, -170, 0], dx: 0.2 * (e / 900) }]),
     // 🤏 pinched with the pad of the index finger: thumb beside its last segment, not on the tip
