@@ -6,7 +6,7 @@ import type { Word } from "../../features/languages/words";
 // returns scripted synthetic hands. Scenes are timed inside the page (gestures are
 // time-sensitive); the test just starts a scene and waits for it to finish.
 
-type ShapeKind = "line" | "rect" | "tri";
+type ShapeKind = "line" | "rect" | "circle";
 declare global {
   interface Window {
     __airDraw: {
@@ -16,6 +16,7 @@ declare global {
       penColor: string;
       wheel: number | null;
       shape: ShapeKind | null;
+      hands: [number, number]; // [live, remembered]
     };
     __gameDeck: Word[];
     __quickDraw: QuickDrawTestHook;
@@ -70,38 +71,60 @@ export function installMock() {
   const POINT: HandSpec["ext"] = [true, false, false, false];
   const OPEN: HandSpec["ext"] = [true, true, true, true];
   const FIST: HandSpec["ext"] = [false, false, false, false];
-  const doublePinch = (e: number): HandSpec[] | null =>
-    e > 1150 ? null : [{ ext: OPEN, thumb: (e >= 250 && e < 450) || (e >= 700 && e < 900) ? "pinch" : "out" }];
+  // a fist with the thumb straight out to the side; a right hand's thumb points right on screen
+  const THUMB_SIDE: Thumb = [-150, -55, 0];
 
   // scene(elapsed ms) → hands, or null when the scene is over (no hands in frame between scenes)
+  // (an empty list is a frame where the hand isn't detected, e.g. partly off-screen)
   const scenes: Record<string, (e: number) => HandSpec[] | null> = {
-    pointTucked: e => (e > 700 ? null : [{ ext: POINT, thumb: "tucked", dx: 0.1 * (e / 700) }]),
-    pointThumbOut: e => (e > 700 ? null : [{ ext: POINT, thumb: "out", dx: 0.1 * (e / 700) }]),
-    doublePinch,
-    // open hand: still for 200 ms, then 0.35 frame-widths in 150 ms
-    flick: e => (e > 600 ? null : [{ ext: OPEN, thumb: "out", dx: 0.35 * ramp(e, 200, 150) }]),
+    // 🤏 pinch while moving: one stroke
+    pinchDraw: e => (e > 700 ? null : [{ ext: POINT, thumb: "pinch", dx: 0.1 * (e / 700) }]),
+    // ☝️ pointing without a pinch draws nothing
+    point: e => (e > 700 ? null : [{ ext: POINT, thumb: "tucked", dx: 0.1 * (e / 700) }]),
+    // a pinched stroke with an 80 ms pinch flicker and a 150 ms tracking dropout: still one stroke
+    pinchGlitchy: e => {
+      if (e > 1100) return null;
+      if (e >= 650 && e < 800) return [];
+      return [{ ext: POINT, thumb: e >= 400 && e < 480 ? "out" : "pinch", dx: 0.15 * (e / 1100) }];
+    },
+    // two hands drawing: the second starts pinching well after the first, so it's not a line
+    twoPinchDraw: e => {
+      if (e > 900) return null;
+      const a: HandSpec = { ext: POINT, thumb: "pinch", at: [0.25 + 0.1 * (e / 900), 0.7] };
+      const b: HandSpec = { ext: POINT, thumb: e >= 450 ? "pinch" : "tucked", at: [0.7 + 0.08 * (e / 900), 0.7], mirror: true };
+      return [a, b];
+    },
+    // 👈 / 👉 (as seen on screen; the mirrored hand is a left hand)
+    thumbLeft: e => (e > 600 ? null : [{ ext: FIST, thumb: THUMB_SIDE, mirror: true }]),
+    thumbRight: e => (e > 600 ? null : [{ ext: FIST, thumb: THUMB_SIDE }]),
+    // open hand: still for 200 ms, then flicked 0.2 frame widths in 80 ms — to the user's left
+    // (+x in the camera image is left on the mirrored screen), to the right, or a slow swipe left
+    flick: e => (e > 450 ? null : [{ ext: OPEN, thumb: "out", dx: 0.2 * ramp(e, 200, 80) }]),
+    flickRight: e => (e > 450 ? null : [{ ext: OPEN, thumb: "out", dx: 0.3 - 0.2 * ramp(e, 200, 80) }]),
+    swipeLeftSlow: e => (e > 900 ? null : [{ ext: OPEN, thumb: "out", dx: 0.3 * ramp(e, 200, 600) }]),
     // ✋ still (wheel opens at 700 ms) → tilt 60° to the user's left → hold → ✊ pick
     wheel: e => (e > 1700 ? null : [e < 1400
       ? { ext: OPEN, thumb: "out", rot: 60 * ramp(e, 900, 300) }
       : { ext: FIST, thumb: "tucked", rot: 60 }]),
-    // both hands pinch → pull apart → let go
+    // both hands pinch at once → pull apart → let go
     line: e => {
       if (e > 1100) return null;
       const s = 0.15 * ramp(e, 300, 300), thumb: Thumb = e < 800 ? "pinch" : "out";
       return [{ ext: POINT, thumb, at: [0.4 - s, 0.75] }, { ext: POINT, thumb, at: [0.6 + s, 0.72], mirror: true }];
     },
-    // both hands in an L (held 700 ms; arms at 500) → pull apart → close the hands
+    // both hands in an L (arms after 350 ms) → pull apart → close the hands
     rect: e => {
       if (e > 1500) return null;
       const s = 0.1 * ramp(e, 700, 300), held = e < 1200;
       const h = { ext: held ? POINT : FIST, thumb: (held ? "out" : "tucked") as Thumb };
       return [{ ...h, at: [0.35 - s, 0.85], mirror: true }, { ...h, at: [0.65 + s, 0.55] }];
     },
-    // index tips + thumb tips touching (a left and a right hand, side by side) → pull apart → close
-    tri: e => {
+    // an O: a left and a right hand side by side, index tips together on top and thumb tips together
+    // underneath, a gap between each hand's thumb and index → pull apart → close the hands
+    circle: e => {
       if (e > 1500) return null;
       const s = 200 * ramp(e, 300, 400), held = e < 1200;
-      const h = { ext: held ? POINT : FIST, thumb: (held ? [-30, -30, 0] : "tucked") as Thumb, at: [0.5, 0.8] as [number, number] };
+      const h = { ext: held ? POINT : FIST, thumb: (held ? [-30, -60, 0] : "tucked") as Thumb, at: [0.5, 0.8] as [number, number] };
       return [{ ...h, off: [-30 - s, 0], mirror: true }, { ...h, off: [30 + s, 0] }];
     },
   };
@@ -135,13 +158,22 @@ export function installMock() {
   };
 }
 
-export async function play(page: Page, scene: string) {
+/**
+ * Run a scene to its end. Hands that leave are remembered for a moment (HAND_MEMORY_MS) and a
+ * new hand nearby would pick up their state, so by default this also waits until they're
+ * forgotten: every scene starts from a clean slate. Pass { forget: false } to look at the
+ * remembered state instead.
+ */
+export async function play(page: Page, scene: string, { forget = true } = {}) {
   await page.evaluate(s => window.__play(s), scene);
   await page.waitForFunction(() => window.__sceneDone);
-  // let one more empty frame through so strokes are closed
+  // let one more empty frame through
   const n = await page.evaluate(() => window.__detectCalls);
   await page.waitForFunction(k => window.__detectCalls > k + 1, n);
+  if (forget) await forgotten(page);
 }
+export const forgotten = (page: Page) =>
+  page.waitForFunction(() => window.__airDraw.hands[0] + window.__airDraw.hands[1] === 0);
 // hold a pointing fingertip over the centre of an element for `ms` (scene runs in the page)
 export async function hoverHand(page: Page, target: Locator, ms: number) {
   const box = (await target.boundingBox())!;

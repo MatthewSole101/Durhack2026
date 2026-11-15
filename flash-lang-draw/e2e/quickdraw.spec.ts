@@ -295,7 +295,7 @@ test.describe("game", () => {
     await expect(card).toHaveAttribute("data-solved", "false");
     await expect(card).toContainText("Draw this · Español");
 
-    await play(page, "pointTucked"); // a straight horizontal stroke
+    await play(page, "pinchDraw"); // a straight horizontal stroke
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses[0].label)).toBe("line");
     await expect(card).toHaveAttribute("data-solved", "true");
@@ -308,7 +308,7 @@ test.describe("game", () => {
     expect(await page.evaluate(() => window.__quickDraw.prediction.guesses)).toEqual([]);
 
     // the same drawing is not a zebra: the word stays
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     await page.waitForTimeout(300);
     await expect(page.getByTestId("word")).toHaveText("zebra");
@@ -323,7 +323,7 @@ test.describe("game", () => {
     const guesses = page.getByTestId("quickdraw-guesses").getByRole("listitem");
     await expect(guesses).toHaveText(["Draw something…"]);
 
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await expect(guesses).toHaveCount(5);
     await expect(guesses.first()).toHaveText(/^1\. line\d+\.\d%$/);
 
@@ -350,7 +350,7 @@ test.describe("game", () => {
     await expect(card).toHaveAttribute("data-solved", "true");
     await expect(page.getByTestId("word")).toHaveText("zebra", { timeout: 5_000 });
 
-    await play(page, "pointTucked");
+    await play(page, "pinchDraw");
     await page.waitForFunction(() => window.__quickDraw.prediction.guesses.length === 5);
     await page.getByRole("button", { name: "Back to languages" }).click();
     await expect(page.getByTestId("start-screen")).toBeVisible();

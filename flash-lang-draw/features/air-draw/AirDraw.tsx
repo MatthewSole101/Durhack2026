@@ -97,7 +97,7 @@ export default function AirDraw() {
       onStrokes: state => (state === "drawing" ? predictor?.drawing() : predictor?.settled()),
     });
     engineRef.current = engine;
-    const handsLoaded = engine.load().then(
+    engine.load().then(
       () => { if (alive) setModelReady(true); },
       e => { if (alive) setStatus("Failed to load model: " + message(e)); },
     );
@@ -166,8 +166,10 @@ export default function AirDraw() {
       },
     }) : undefined;
 
-    // one wasm runtime at a time: see features/quickdraw/runtime.ts
-    handsLoaded.then(() => loadQuickDrawModel(stage => report({ state: stage }))).then(
+    // Load the classifier now, alongside the hand tracker (which runs in its own worker), so its
+    // main-thread compile happens under "Loading hand tracking…" rather than while the player is
+    // already pointing at a language. Main-thread wasm loads are serialised by withWasmLoadLock.
+    loadQuickDrawModel(stage => report({ state: stage })).then(
       m => {
         if (!alive) { m.dispose(); return; }
         model = m;
