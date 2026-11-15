@@ -18,9 +18,10 @@ export type ClassifierStatus =
 
 /**
  * The flashcard prompt: the language being learnt (flag + name), then the word to draw in it.
- * The word is shown in that language only — no English underneath.
+ * The word is shown in that language only. Its English appears underneath only once the word
+ * has been skipped (`revealed`), so the learner finds out what they didn't know.
  */
-export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; solved: boolean }) {
+export function WordCard({ word, lang, solved, revealed = false }: { word: Word; lang: LangCode; solved: boolean; revealed?: boolean }) {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-5 flex flex-col items-center gap-1.5">
       <div
@@ -28,19 +29,25 @@ export function WordCard({ word, lang, solved }: { word: Word; lang: LangCode; s
         data-lang={lang}
         data-word={word.id}
         data-solved={solved}
+        data-revealed={revealed}
         role="status"
         className={`rotate-[-1deg] rounded-2xl border-[3px] border-[#1d1b16] px-7 pb-2.5 pt-2 text-center text-[#1d1b16] shadow-[4px_5px_0_rgba(0,0,0,0.45)] transition-colors duration-200 ${
-          solved ? "bg-[#b9efb0]" : "bg-[#fffdf5]"
+          solved ? "bg-[#b9efb0]" : revealed ? "bg-[#ffe9a8]" : "bg-[#fffdf5]"
         }`}
       >
         <div data-testid="word-card-heading" className="font-hand flex items-center justify-center gap-1.5 text-base text-[#1d1b16]/70">
           <Flag code={lang} width={21} height={14} />
-          {languageByCode(lang).name} · {solved ? "Correct!" : "Draw this"}
+          {languageByCode(lang).name} · {solved ? "Correct!" : revealed ? "Skipped" : "Draw this"}
         </div>
         <div className="font-toon text-[clamp(2rem,5vw,3rem)] font-bold leading-tight">
           {solved && <span aria-hidden>✓ </span>}
           <span lang={lang} data-testid="word">{word.t[lang]}</span>
         </div>
+        {revealed && (
+          <div lang="en" data-testid="word-english" className="font-hand text-xl leading-tight text-[#1d1b16]/75">
+            in English: <span className="font-semibold text-[#1d1b16]">{word.en}</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -25,7 +25,8 @@ camera access). `npm install` also copies the doodle model's WebAssembly runtime
 4. **Live judging.** Every change to the drawing is classified in the browser. As soon as the
    model's **top guess** is the word on the card, the card turns green ("Correct!") and the next
    word comes up after 1.6 s on a clean canvas.
-5. **Skip / leave.** "skip ›" under the card (or `N`) deals the next word. "← Languages" (or
+5. **Skip / leave.** "Skip →" (or `N`) gives up on the word: the card shows what it means in
+   English for 3 s, then the next word comes up ("Next →" or `N` again moves on at once). "← Languages" (or
    `Esc`) goes back to the language list.
 
 ### Gestures

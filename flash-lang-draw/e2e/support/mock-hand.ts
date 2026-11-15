@@ -226,7 +226,7 @@ export async function hoverHand(page: Page, target: Locator, ms: number, { pinch
 }
 export const langButton = (page: Page, name: RegExp) => page.getByRole("button", { name });
 
-/** A flashcard for tests: the same text in every language, won by the given Quick Draw classes. */
+/** A flashcard for tests: the same text in every language (and in English), won by the given Quick Draw classes. */
 export function testWord(id: string, ...labels: string[]): Word {
   return { id, en: id, labels, t: { es: id, ru: id, pl: id, id: id, te: id, yo: id, ja: id } };
 }

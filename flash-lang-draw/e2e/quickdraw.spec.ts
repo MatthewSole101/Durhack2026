@@ -371,7 +371,8 @@ test.describe("game", () => {
   });
 
   test("guesses follow the drawing: top 5 with percentages, cleared with the canvas, skip moves on", async ({ page }) => {
-    await startGame(page, [testWord("cat", "cat"), testWord("zebra", "zebra")]);
+    // the first word is Spanish with a different English, so the reveal can be told apart from the word
+    await startGame(page, [{ ...testWord("cat", "cat"), t: { ...testWord("cat").t, es: "el gato" } }, testWord("line", "line"), testWord("zebra", "zebra")]);
     await page.keyboard.press("d");
     const guesses = page.getByTestId("quickdraw-guesses").getByRole("listitem");
     await expect(guesses).toHaveText(["Draw something…"]);
@@ -385,9 +386,30 @@ test.describe("game", () => {
     await page.keyboard.press("z"); // undo the clear: judged again straight away
     await expect(guesses).toHaveCount(5);
 
-    await expect(page.getByTestId("word")).toHaveText("cat");
+    // skip: the card first says what the word means in English, then the next word comes up
+    const card = page.getByTestId("word-card"), english = page.getByTestId("word-english");
+    await expect(page.getByTestId("word")).toHaveText("el gato");
+    await expect(english).toHaveCount(0); // not while the word is still to be drawn
     await page.getByRole("button", { name: /Skip/ }).click();
+    await expect(card).toHaveAttribute("data-revealed", "true");
+    await expect(page.getByTestId("word-card-heading")).toHaveText("Español · Skipped");
+    await expect(page.getByTestId("word")).toHaveText("el gato");
+    await expect(english).toHaveText("in English: cat");
+    await expect(page.getByTestId("word")).toHaveText("line", { timeout: 5_000 }); // moves on by itself
+    await expect(card).toHaveAttribute("data-revealed", "false");
+    await expect(english).toHaveCount(0);
+    await expect(guesses).toHaveText(["Draw something…"]);
+    expect(await page.evaluate(() => window.__airDraw.strokes.length)).toBe(0);
+
+    // a skipped word can't be won any more, and skipping again (here: N) moves on straight away
+    await page.keyboard.press("n");
+    await expect(english).toHaveText("in English: line");
+    await play(page, "pinchDraw"); // a line, drawn too late
+    await expect(guesses.first()).toHaveText(/^1\. line/);
+    await expect(card).toHaveAttribute("data-solved", "false");
+    await page.getByRole("button", { name: "Next →" }).click();
     await expect(page.getByTestId("word")).toHaveText("zebra");
+    await expect(english).toHaveCount(0);
     await expect(guesses).toHaveText(["Draw something…"]);
 
     await page.keyboard.press("d");
