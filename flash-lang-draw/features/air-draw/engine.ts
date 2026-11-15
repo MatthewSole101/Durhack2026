@@ -14,6 +14,7 @@
 // shape — and a detection that reappears near it picks that back up.
 
 import type { HandLandmarker, HandLandmarkerResult, NormalizedLandmark } from "@mediapipe/tasks-vision";
+import { withWasmLoadLock } from "@/features/wasm-load-lock";
 import {
   ACTION_COOLDOWN_MS, CIRCLE_ARM_MS, CIRCLE_HOLE, CIRCLE_TOUCH, CIRCLE_SEGMENTS, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON,
   FLICK_COOLDOWN_MS, FLICK_DIST, FLICK_OPEN_SHARE, FLICK_PEAK_SPEED, FLICK_STRAIGHT, FLICK_WINDOW_MS,
@@ -162,9 +163,15 @@ function loadLandmarker(): Promise<Shared> {
       minHandPresenceConfidence: MIN_HAND_PRESENCE,
       minTrackingConfidence: MIN_TRACKING,
     });
+    // Creating it bootstraps MediaPipe's wasm runtime through Emscripten globals that LiteRT (Quick
+    // Draw) also uses, and the two now load at the same time: take turns (see wasm-load-lock.ts).
+    const create = (delegate: "GPU" | "CPU") => {
+      const make = () => vision.HandLandmarker.createFromOptions(fileset, opts(delegate));
+      return mock ? make() : withWasmLoadLock(make);
+    };
     let landmarker: HandLandmarker;
-    try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts("GPU")); }
-    catch { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts("CPU")); } // WebGL fallback
+    try { landmarker = await create("GPU"); }
+    catch { landmarker = await create("CPU"); } // WebGL fallback
     // The first inference compiles shaders and can block the page for a while. Pay that cost
     // here, under "Loading model…", rather than as a freeze right after the camera starts.
     try {
