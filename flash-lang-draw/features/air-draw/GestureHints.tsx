@@ -42,9 +42,9 @@ export default function GestureHints() {
             </button>
           </div>
           <ul className="flex flex-col gap-1">
-            <Hint icon="☝️" title="Draw">point your index finger, other fingers curled</Hint>
-            <Hint icon="🤏" title="Undo">pinch twice quickly</Hint>
-            <Hint icon="👋" title="Clear">flick an open hand across</Hint>
+            <Hint icon="🤏" title="Draw">pinch thumb and index together, move to draw</Hint>
+            <Hint icon="✊" title="Undo">clench a fist twice</Hint>
+            <Hint icon="👋" title="Clear">swipe an open hand sideways</Hint>
             <Hint icon="✋" title="Colour">hold an open palm still, tilt to choose, fist to pick</Hint>
           </ul>
           <div className="font-toon mb-0.5 mt-2 text-[11px] font-semibold uppercase tracking-wider text-[#1d1b16]/50">
@@ -52,8 +52,8 @@ export default function GestureHints() {
           </div>
           <ul className="flex flex-col gap-1">
             <Hint icon={<ShapeIcon d="M4 19L20 5" />} title="Line">pinch with both hands</Hint>
-            <Hint icon={<ShapeIcon d="M4 5h16v14H4z" />} title="Rectangle">an L with each hand; fingertips are the corners</Hint>
-            <Hint icon={<ShapeIcon d="M12 4l9 16H3z" />} title="Triangle">touch index tips and thumb tips together</Hint>
+            <Hint icon={<ShapeIcon d="M4 5h16v14H4z" />} title="Rectangle">an L with each hand; where thumb meets index are opposite corners</Hint>
+            <Hint icon={<ShapeIcon d="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18" />} title="Circle">make an O: index tips and thumb tips touching</Hint>
           </ul>
         </div>
       ) : (

@@ -2,50 +2,62 @@
 // Framework-free on purpose — AirDraw.tsx owns the DOM and UI state, this owns the frame loop.
 //
 // Gestures (draw mode):
-//   one hand   ☝️ draw · 🤏🤏 undo · 👋 flick to clear · ✋ hold still for the colour wheel
-//   two hands  line (both pinch) · rectangle (both L) · triangle (index tips + thumbs touching),
+//   one hand   🤏 pinch to draw · ✊✊ clench twice to undo · 👋 flick to clear · ✋ hold still for the colour wheel
+//   two hands  line (both pinch) · rectangle (an L with each hand) · circle (an O made with both hands),
 //              stretched by pulling the hands apart and placed on release
+// A hand MediaPipe briefly loses (e.g. half out of frame) keeps its state for HAND_MEMORY_MS.
 
 import type { HandLandmarker, HandLandmarkerResult, NormalizedLandmark } from "@mediapipe/tasks-vision";
 import {
-  CURL_MAX, CURL_OFF, DOUBLE_GAP_MS, DRAW_ARM_MS, EXT_OFF, EXT_ON, FLICK_COOLDOWN_MS, FLICK_DIST, FLICK_WINDOW_MS,
-  MODEL_URL, PALETTE, PEN_COLOR, PEN_SIZE, PINCH_OFF, PINCH_ON, POSE_FRAMES, RECT_HOLD_MS, RECT_MIN_GAP,
-  SHAPE_ARM_FRAMES, SHAPE_COOLDOWN_MS, SHAPE_MIN_PX, SQUARE_SNAP, TAP_MAX_MS, THUMB_CLOSED, THUMB_OPEN, TOUCH, WASM_BASE,
-  WHEEL_COOLDOWN_MS, WHEEL_HOLD_MS, WHEEL_SPAN_DEG, WHEEL_STILL, WHEEL_UPRIGHT_DEG,
+  CLENCH_GAP_MS, CLENCH_MAX_MS, CURL_MAX, CURL_OFF, DRAW_ARM_MS, EXT_OFF, EXT_ON, FIST_FRAMES, FIST_INDEX_OFF, FIST_INDEX_ON, FLICK_COOLDOWN_MS,
+  FLICK_DIST, FLICK_EXIT_SPEED, FLICK_WINDOW_MS, FLINCH_MS, HAND_DETECTION_CONF, HAND_MEMORY_JOIN, HAND_MEMORY_MS, HAND_MEMORY_REACH,
+  HAND_PRESENCE_CONF, HAND_TRACKING_CONF, LOCAL_MODEL_URL, LOCAL_WASM_BASE, MODEL_URL, PALETTE, PEN_COLOR, PEN_SIZE,
+  PEN_UP_FRAMES, PINCH_OFF, PINCH_ON, POSE_FRAMES, RECT_HOLD_MS, RECT_MIN_GAP, RECT_MIN_SIDE, SHAPE_ARM_FRAMES,
+  SHAPE_COOLDOWN_MS, SHAPE_MIN_PX, SQUARE_SNAP, THUMB_CLOSED, THUMB_OPEN, TOUCH, WASM_BASE, WHEEL_COOLDOWN_MS,
+  WHEEL_HOLD_MS, WHEEL_SPAN_DEG, WHEEL_STILL, WHEEL_UPRIGHT_DEG,
 } from "./constants";
 
 type Vision = Pick<typeof import("@mediapipe/tasks-vision"), "FilesetResolver" | "HandLandmarker">;
 type Pt = [number, number];
 type Pt3 = [number, number, number];
 type Fit = { vw: number; vh: number; s: number; dw: number; dh: number; ox: number; oy: number };
-type ShapeKind = "line" | "rect" | "tri";
-// pts in un-mirrored video px; `shape` strokes are straight-edged (rect / tri closed)
+type ShapeKind = "line" | "rect" | "circle";
+// pts in un-mirrored video px. Shapes: line = 2 ends, rect = 4 corners, circle = [centre, a point on the rim]
 type Stroke = { pts: Pt[]; active: boolean; color: string; shape?: ShapeKind };
 type HistoryEntry = { type: "stroke"; stroke: Stroke } | { type: "clear"; saved: Stroke[] };
 type CurlFinger = "middle" | "ring" | "pinky";
 type Slot = {
   wrist: Pt;
-  pointFrames: number; relaxFrames: number; pointing: boolean; stroke: Stroke | null;
-  fx: OneEuro; fy: OneEuro; tip: Pt | null;
-  pinched: boolean; pinchStart: number; lastTapEnd: number;
-  idxExt: boolean; thumbIn: boolean; curled: Record<CurlFinger, boolean>;
+  lm: NormalizedLandmark[] | null; // last landmarks seen
+  lostAt: number | null; // when MediaPipe stopped reporting this hand (null = in view)
+  // pen
+  pinchFrames: number; relaxFrames: number; stroke: Stroke | null; pending: Pt[];
+  lastStroke: Stroke | null; strokeBorn: number; // this hand's most recent stroke, and when its pen went down
+  fx: OneEuro; fy: OneEuro; pen: Pt | null; // filtered pen point (between thumb and index tips), video px
+  // finger states
+  idxExt: boolean; idxCurled: boolean; thumbIn: boolean; curled: Record<CurlFinger, boolean>;
   palm: number; // wrist → middle knuckle, video px (3D)
-  openPalm: boolean; fist: boolean; lPose: boolean;
-  balled: boolean; // all four fingers properly curled (a fist's thumb can read as a pinch)
+  pinched: boolean; openPalm: boolean; lPose: boolean;
+  balled: boolean; // a fist this frame
+  // ✊ debounced fist + clench counting
+  fist: boolean; fistFrames: number; openFrames: number; fistStart: number; lastClenchEnd: number;
+  fistIgnore: boolean; // this fist was used for something else (wheel pick, placing a shape)
+  ignoreFistUntil: number;
   still: { x: number; y: number; t: number } | null; // where an open palm started holding still
   wheelBlockUntil: number;
-  trail: { t: number; x: number; y: number; open: boolean }[];
+  trail: { t: number; x: number; y: number; open: boolean; pen: boolean }[];
+  dbg: { index: number; pinch: number };
 };
-type HandInfo = { lm: NormalizedLandmark[]; slot: Slot };
+type HandInfo = { lm: NormalizedLandmark[]; slot: Slot; ghost?: boolean };
 type Wheel = { slot: Slot; theta: number; idx: number; fistFrames: number; center: Pt; radius: number };
-type Shape = { kind: ShapeKind; pts: Pt[]; releaseFrames: number };
+type Shape = { kind: ShapeKind; pts: Pt[]; handles: Pt[]; releaseFrames: number };
 
 // Test builds only (NEXT_PUBLIC_AIR_DRAW_TEST=1): a mock landmarker can be injected and state is observable.
 const TEST_BUILD = process.env.NEXT_PUBLIC_AIR_DRAW_TEST === "1";
 type TestHook = {
   strokes: Stroke[]; toasts: string[];
   screenToVideo: (x: number, y: number) => Pt;
-  penColor: string; wheel: number | null; shape: ShapeKind | null;
+  penColor: string; wheel: number | null; shape: ShapeKind | null; hands: number; remembered: number;
 };
 type TestWindow = Window & { __airDrawMock?: Vision; __airDraw?: TestHook };
 
@@ -85,14 +97,20 @@ function handTilt(f: Fit, lm: NormalizedLandmark[]) {
   return Math.atan2(-(mx - wx), -(my - wy)) / DEG; // x negated: the view is mirrored
 }
 
+/** Corner of an L: the web between the thumb and the index finger (thumb MCP ↔ index MCP). */
+const crotch = (f: Fit, lm: NormalizedLandmark[]) => mid(px(f, lm[2]), px(f, lm[5]));
+/** Where a pinch closes: between the thumb tip and the index tip. */
+const pinchPoint = (f: Fit, lm: NormalizedLandmark[]) => mid(px(f, lm[4]), px(f, lm[8]));
+
 function newSlot(): Slot {
   return {
-    wrist: [0, 0], pointFrames: 0, relaxFrames: 0, pointing: false, stroke: null,
-    fx: new OneEuro(), fy: new OneEuro(), tip: null,
-    pinched: false, pinchStart: 0, lastTapEnd: -1e9,
-    idxExt: false, thumbIn: false, curled: { middle: false, ring: false, pinky: false },
-    palm: 1, openPalm: false, fist: false, lPose: false, balled: false, still: null, wheelBlockUntil: 0,
-    trail: [],
+    wrist: [0, 0], lm: null, lostAt: null,
+    pinchFrames: 0, relaxFrames: 0, stroke: null, pending: [], lastStroke: null, strokeBorn: 0,
+    fx: new OneEuro(), fy: new OneEuro(), pen: null,
+    idxExt: false, idxCurled: false, thumbIn: false, curled: { middle: false, ring: false, pinky: false },
+    palm: 1, pinched: false, openPalm: false, lPose: false, balled: false,
+    fist: false, fistFrames: 0, openFrames: 0, fistStart: 0, lastClenchEnd: -1e9, fistIgnore: false, ignoreFistUntil: 0,
+    still: null, wheelBlockUntil: 0, trail: [], dbg: { index: 0, pinch: 0 },
   };
 }
 
@@ -101,27 +119,60 @@ function newSlot(): Slot {
 type Shared = { landmarker: HandLandmarker; connections: { start: number; end: number }[] };
 let sharedLandmarker: Promise<Shared> | null = null;
 
+/** The self-hosted copy if it's there (see scripts/setup-mediapipe.mjs), else the CDN. */
+async function fetchModel(): Promise<Uint8Array> {
+  let lastError: unknown;
+  for (const url of [LOCAL_MODEL_URL, MODEL_URL]) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return new Uint8Array(await res.arrayBuffer());
+      lastError = new Error(`HTTP ${res.status} for ${url}`);
+    } catch (e) { lastError = e; }
+  }
+  throw lastError;
+}
+async function wasmBase(): Promise<string> {
+  try {
+    if ((await fetch(`${LOCAL_WASM_BASE}/vision_wasm_internal.js`, { method: "HEAD" })).ok) return LOCAL_WASM_BASE;
+  } catch { /* fall through to the CDN */ }
+  return WASM_BASE;
+}
+
 function loadLandmarker(): Promise<Shared> {
   sharedLandmarker ??= (async () => {
+    const t0 = performance.now(), ms = (a: number, b = performance.now()) => `${Math.round(b - a)}ms`;
     const mock = TEST_BUILD ? (window as TestWindow).__airDrawMock : undefined;
-    const vision: Vision = mock ?? (await import("@mediapipe/tasks-vision"));
-    const fileset = await vision.FilesetResolver.forVisionTasks(WASM_BASE);
+    // runtime, WASM location and model all download in parallel (they used to be one after another)
+    const [vision, base, model] = await Promise.all([
+      mock ?? import("@mediapipe/tasks-vision"),
+      mock ? WASM_BASE : wasmBase(),
+      mock ? new Uint8Array() : fetchModel(),
+    ]);
+    const tFetched = performance.now();
+    const fileset = await vision.FilesetResolver.forVisionTasks(base);
     const opts = (delegate: "GPU" | "CPU") => ({
-      baseOptions: { modelAssetPath: MODEL_URL, delegate },
+      baseOptions: { modelAssetBuffer: model.slice(), delegate }, // a copy each try: the buffer may be consumed
       runningMode: "VIDEO" as const, numHands: 2,
-      minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+      minHandDetectionConfidence: HAND_DETECTION_CONF,
+      minHandPresenceConfidence: HAND_PRESENCE_CONF,
+      minTrackingConfidence: HAND_TRACKING_CONF,
     });
-    let landmarker: HandLandmarker;
+    let landmarker: HandLandmarker, delegate = "GPU";
     try { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts("GPU")); }
-    catch { landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts("CPU")); } // WebGL fallback
+    catch { delegate = "CPU"; landmarker = await vision.HandLandmarker.createFromOptions(fileset, opts("CPU")); } // WebGL fallback
+    const tCreated = performance.now();
     // The first inference compiles shaders and can block the page for a while. Pay that cost
-    // here, under "Loading model…", rather than as a freeze right after the camera starts.
+    // here, under "Loading hand tracking…", rather than as a freeze right after the camera starts.
     try {
       const blank = document.createElement("canvas");
       blank.width = blank.height = 64;
       blank.getContext("2d")!.fillRect(0, 0, 64, 64);
       landmarker.detectForVideo(blank, performance.now());
     } catch { /* warm-up is best-effort */ }
+    if (!mock) {
+      console.info(`[air-draw] hand tracking ready in ${ms(t0)} — download ${ms(t0, tFetched)} (${base === LOCAL_WASM_BASE ? "local" : "CDN"}), ` +
+        `${delegate} setup ${ms(tFetched, tCreated)}, first frame ${ms(tCreated)}`);
+    }
     return { landmarker, connections: vision.HandLandmarker.HAND_CONNECTIONS };
   })();
   sharedLandmarker.catch(() => { sharedLandmarker = null; }); // allow a retry after a failed load
@@ -133,7 +184,7 @@ export type Pointer = { x: number; y: number } | null;
 
 /**
  * "menu": track the fingertip and report it through onPointer; nothing is drawn.
- * "draw": the full gesture set, rendered to the canvas (the fingertip is still reported).
+ * "draw": the full gesture set, rendered to the canvas (the fingertip is still reported, except while drawing).
  */
 export type AirDrawMode = "menu" | "draw";
 
@@ -170,23 +221,24 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
   let W = 0, H = 0;
   let mode: AirDrawMode = "menu";
   let armAt = 0; // pen stays up until this time (see DRAW_ARM_MS)
+  let debug = false; // D: show finger scores next to each hand
   const cursorFx = new OneEuro(), cursorFy = new OneEuro();
 
   const strokes: Stroke[] = [];
   const history: HistoryEntry[] = [];
-  let slots: Slot[] = [];
+  let slots: Slot[] = []; // hands in view first, then remembered ones
   let lastInfo: HandInfo[] | null = null, lastVideoTime = -1, lastFlickT = -1e9;
   let penColor: string = PEN_COLOR;
   let wheel: Wheel | null = null;
   let shape: Shape | null = null;
-  const arming = { line: 0, tri: 0, rectSince: 0 }; // two-hand shape candidates (frames / start time)
+  const arming = { line: 0, circle: 0, rectSince: 0 }; // two-hand shape candidates (frames / start time)
   let shapeBlockUntil = 0;
 
   let toast = onToast;
   let hook: TestHook | null = null;
   if (TEST_BUILD) {
     const h: TestHook = {
-      strokes, toasts: [], penColor, wheel: null, shape: null,
+      strokes, toasts: [], penColor, wheel: null, shape: null, hands: 0, remembered: 0,
       // inverse of toScreen: screen px → normalised video coords, so tests can aim a mock fingertip
       screenToVideo: (x, y) => {
         const f = fit();
@@ -208,6 +260,7 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     const k = e.key.toLowerCase();
     if (k === "c") clearAll();
     if (k === "z") undo();
+    if (k === "d") debug = !debug;
   }
   window.addEventListener("resize", resize);
   window.addEventListener("keydown", onKey);
@@ -268,15 +321,18 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     strokes.push(s); history.push({ type: "stroke", stroke: s });
     return s;
   }
+  function removeStroke(st: Stroke) { // silently, as if it was never drawn
+    const i = strokes.indexOf(st);
+    if (i >= 0) strokes.splice(i, 1);
+    const j = history.findIndex(h => h.type === "stroke" && h.stroke === st);
+    if (j >= 0) history.splice(j, 1);
+  }
   function endStroke(slot: Slot) {
     const st = slot.stroke;
     if (!st) return;
     st.active = false;
-    if (!st.pts.length) { // nothing was drawn: drop silently
-      strokes.splice(strokes.indexOf(st), 1);
-      history.splice(history.findIndex(h => h.type === "stroke" && h.stroke === st), 1);
-    }
-    slot.stroke = null; slot.fx.reset(); slot.fy.reset();
+    if (!st.pts.length) removeStroke(st);
+    slot.stroke = null;
   }
   function undo() {
     // most recent finished action (skip strokes still being drawn)
@@ -297,97 +353,115 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     toast("✨ Cleared");
   }
 
-  // ---------------- per-hand gesture analysis ----------------
-  // keep each hand's state attached to the same physical hand even if result order swaps
-  function trackHands(wrists: Pt[]) {
-    let prev = slots;
-    if (wrists.length === 2 && prev.length === 2) {
-      const keep = dist(wrists[0], prev[0].wrist) + dist(wrists[1], prev[1].wrist);
-      const swap = dist(wrists[0], prev[1].wrist) + dist(wrists[1], prev[0].wrist);
-      if (swap < keep) prev = [prev[1], prev[0]];
-    } else if (wrists.length === 1 && prev.length === 2) {
-      const i = dist(wrists[0], prev[1].wrist) < dist(wrists[0], prev[0].wrist) ? 1 : 0;
-      endStroke(prev[1 - i]); prev = [prev[i]];
-    } else if (wrists.length === 2 && prev.length === 1) {
-      prev = dist(wrists[1], prev[0].wrist) < dist(wrists[0], prev[0].wrist) ? [newSlot(), prev[0]] : [prev[0], newSlot()];
-    } else if (wrists.length === 0) {
-      prev.forEach(endStroke);
-    }
-    slots = wrists.map((wrist, i) => Object.assign(prev[i] ?? newSlot(), { wrist }));
-    if (wheel && !slots.includes(wheel.slot)) wheel = null; // hand left the frame: cancel the wheel
+  // ---------------- which hand is which ----------------
+  function forget(s: Slot) {
+    endStroke(s);
+    if (wheel?.slot === s) wheel = null;
   }
 
-  const shapePending = () => arming.line > 0 || arming.tri > 0 || arming.rectSince > 0;
+  /**
+   * Pair this frame's hands with the hands we know (in view or remembered), nearest wrist first,
+   * so each physical hand keeps its state even when MediaPipe drops it for a moment or swaps the order.
+   * Returns the slot for each detected hand.
+   */
+  function trackHands(wrists: Pt[], f: Fit, t: number): Slot[] {
+    const reach = HAND_MEMORY_REACH * f.vw;
+    const pairs: { i: number; s: Slot; d: number }[] = [];
+    wrists.forEach((w, i) => slots.forEach(s => {
+      const d = dist(w, s.wrist);
+      if (s.lostAt === null || d < reach) pairs.push({ i, s, d });
+    }));
+    pairs.sort((a, b) => a.d - b.d);
+    const found: (Slot | undefined)[] = [];
+    const used = new Set<Slot>();
+    for (const { i, s } of pairs) if (!found[i] && !used.has(s)) { found[i] = s; used.add(s); }
+
+    let remembered: Slot[] = [];
+    for (const s of slots) {
+      if (used.has(s)) continue;
+      if (s.lostAt === null) { s.lostAt = t; flickOnExit(s); } // just went missing
+      if (t - s.lostAt < HAND_MEMORY_MS) remembered.push(s); else forget(s);
+    }
+    const live = wrists.map((wrist, i) => {
+      const s = found[i];
+      if (!s) return Object.assign(newSlot(), { wrist });
+      // back from memory, but somewhere else: carry on, just don't join the stroke up across the jump
+      if (s.lostAt !== null && dist(wrist, s.wrist) > HAND_MEMORY_JOIN * f.vw) endStroke(s);
+      return Object.assign(s, { wrist, lostAt: null });
+    });
+    while (live.length + remembered.length > 2) forget(remembered.shift()!); // MediaPipe tracks two hands at most
+    remembered = remembered.filter(s => s.lm);
+    slots = [...live, ...remembered];
+    return live;
+  }
+
+  // ---------------- per-hand gesture analysis ----------------
+  const shapePending = () => arming.line > 0 || arming.circle > 0 || arming.rectSince > 0;
 
   function analyse(f: Fit, lm: NormalizedLandmark[], s: Slot, t: number): HandInfo {
+    s.lm = lm;
     const wrist = p3(f, lm[0]);
     const extScore = ([, pip, tip]: readonly number[]) => dist(wrist, p3(f, lm[tip])) / (dist(wrist, p3(f, lm[pip])) || 1);
 
     // finger states with hysteresis
     const sc = { index: extScore(FINGERS.index), middle: extScore(FINGERS.middle), ring: extScore(FINGERS.ring), pinky: extScore(FINGERS.pinky) };
     s.idxExt = s.idxExt ? sc.index > EXT_OFF : sc.index > EXT_ON;
+    s.idxCurled = s.idxCurled ? sc.index < FIST_INDEX_OFF : sc.index < FIST_INDEX_ON;
     for (const k of CURL_FINGERS) s.curled[k] = s.curled[k] ? sc[k] < CURL_OFF : sc[k] < CURL_MAX;
     const openCount = Object.values(sc).filter(v => v > EXT_ON).length;
     const palm = s.palm = dist(wrist, p3(f, lm[9])) || 1;
+    const othersCurled = s.curled.middle && s.curled.ring && s.curled.pinky;
 
     // thumb: tucked if its tip sits near the index/middle knuckles or middle-finger PIP
     const thumbTip = p3(f, lm[4]);
     const thumbR = Math.min(...[5, 6, 9, 10].map(i => dist(thumbTip, p3(f, lm[i])))) / palm;
     s.thumbIn = s.thumbIn ? thumbR < THUMB_OPEN : thumbR < THUMB_CLOSED;
 
-    // pinch (thumb tip ↔ index tip, relative to palm size)
+    // ✊ fist this frame. Checked before the pinch: a fist's thumb often lands on the index and reads as one.
+    s.balled = s.idxCurled && othersCurled;
+    // 🤏 pinch (thumb tip ↔ index tip, relative to palm size)
     const pinchR = dist(thumbTip, p3(f, lm[8])) / palm;
-    const wasPinched = s.pinched;
-    s.pinched = s.pinched ? pinchR < PINCH_OFF : pinchR < PINCH_ON;
-
-    const othersCurled = s.curled.middle && s.curled.ring && s.curled.pinky;
+    s.pinched = !s.balled && (s.pinched ? pinchR < PINCH_OFF : pinchR < PINCH_ON);
     s.openPalm = openCount >= 4 && !s.thumbIn && !s.pinched;
-    s.fist = !s.idxExt && othersCurled;
-    s.balled = sc.index < CURL_MAX && othersCurled;
     s.lPose = s.idxExt && !s.thumbIn && othersCurled && !s.pinched; // 🫷 "L": index up, thumb out
+    s.dbg = { index: sc.index, pinch: pinchR };
 
-    const tip = px(f, lm[8]);
-    s.tip = [s.fx.filter(tip[0], t), s.fy.filter(tip[1], t)];
+    const pen = pinchPoint(f, lm);
+    s.pen = [s.fx.filter(pen[0], t), s.fy.filter(pen[1], t)];
 
-    if (wheel?.slot === s) { updateWheel(f, lm, s, t); return { lm, slot: s }; }
     const twoHand = shape !== null || shapePending(); // a two-hand shape owns both hands
+    updateFist(s, t, wheel?.slot !== s && !twoHand);
+    if (wheel?.slot === s) { updateWheel(f, lm, s, t); return { lm, slot: s }; }
 
-    // ☝️ pointing pose → pen down after POSE_FRAMES, pen up after POSE_FRAMES without it
-    const pose = s.idxExt && s.thumbIn && othersCurled && !s.pinched;
-    if (pose) { s.pointFrames++; s.relaxFrames = 0; } else { s.relaxFrames++; s.pointFrames = 0; }
-    if (!s.pointing && s.pointFrames >= POSE_FRAMES) s.pointing = true;
-    if (s.pointing && s.relaxFrames >= POSE_FRAMES) { s.pointing = false; endStroke(s); }
-    if (twoHand) endStroke(s);
-    else if (s.pointing && pose && t >= armAt) {
-      s.stroke ??= addStroke({ pts: [], active: true, color: penColor });
-      const last = s.stroke.pts.at(-1);
-      if (!last || dist(s.tip, last) > 1.5) s.stroke.pts.push(s.tip);
-    }
-
-    // 🤏🤏 double pinch → undo
-    if (!wasPinched && s.pinched) s.pinchStart = t;
-    if (wasPinched && !s.pinched && !twoHand) {
-      const dur = t - s.pinchStart;
-      if (dur <= TAP_MAX_MS) {
-        if (s.pinchStart - s.lastTapEnd <= DOUBLE_GAP_MS) { undo(); s.lastTapEnd = -1e9; }
-        else s.lastTapEnd = t;
-      } else s.lastTapEnd = -1e9;
-    }
-
-    // 👋 flick → clear: fast travel of the hand centre while the hand is open
-    let cx = 0, cy = 0;
-    for (const p of lm) { cx += p.x / 21; cy += p.y / 21; }
-    cy *= f.vh / f.vw; // same units as x
-    s.trail.push({ t, x: cx, y: cy, open: openCount >= 3 });
-    while (s.trail.length && t - s.trail[0].t > FLICK_WINDOW_MS) s.trail.shift();
-    if (!twoHand && t - lastFlickT > FLICK_COOLDOWN_MS && s.trail.length >= 3) {
-      const a = s.trail[0], b = s.trail.at(-1)!;
-      const travel = Math.hypot(b.x - a.x, b.y - a.y);
-      const openShare = s.trail.filter(p => p.open).length / s.trail.length;
-      if (travel > FLICK_DIST && openShare >= 0.5) {
-        lastFlickT = t; s.trail.length = 0;
-        clearAll();
+    // 🤏 pen down after POSE_FRAMES of pinch (backfilling those frames), up after PEN_UP_FRAMES without
+    if (s.pinched) { s.pinchFrames++; s.relaxFrames = 0; } else { s.relaxFrames++; s.pinchFrames = 0; s.pending.length = 0; }
+    if (twoHand) dropYoungStroke(s, t);
+    if (twoHand || t < armAt || s.relaxFrames >= PEN_UP_FRAMES) { endStroke(s); s.pending.length = 0; }
+    else if (s.pinched) {
+      if (!s.stroke) s.pending.push(s.pen);
+      if (!s.stroke && s.pinchFrames >= POSE_FRAMES) {
+        s.stroke = s.lastStroke = addStroke({ pts: [], active: true, color: penColor });
+        s.strokeBorn = t;
       }
+      if (s.stroke) {
+        for (const p of s.pending.length ? s.pending.splice(0) : [s.pen]) {
+          const last = s.stroke.pts.at(-1);
+          if (!last || dist(p, last) > 1.5) s.stroke.pts.push(p);
+        }
+      }
+    }
+
+    // 👋 flick → clear: fast sideways travel of the palm while the hand isn't drawing
+    let cx = 0, cy = 0;
+    for (const i of [0, 5, 9, 13, 17]) { cx += lm[i].x / 5; cy += lm[i].y / 5; } // palm centre: steadier than fingertips when blurred
+    cy *= f.vh / f.vw; // same units as x
+    s.trail.push({ t, x: cx, y: cy, open: openCount >= 3 && !s.pinched, pen: !!s.stroke });
+    while (s.trail.length && t - s.trail[0].t > FLICK_WINDOW_MS) s.trail.shift();
+    if (!twoHand && s.trail.length >= 3) {
+      const b = s.trail.at(-1)!;
+      // furthest any earlier point in the window is from here, counted only when mostly sideways
+      const travel = Math.max(...s.trail.map(a => Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? Math.abs(b.x - a.x) : 0));
+      if (travel > FLICK_DIST && flickPose(s.trail)) flick(s);
     }
 
     // ✋ open palm held still (one hand only) → colour wheel
@@ -397,6 +471,53 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     } else s.still = null;
 
     return { lm, slot: s };
+  }
+
+  // a stroke only a moment old was the hand passing through a pinch (closing into a fist, or
+  // starting a two-hand line), not drawing: take it back
+  function dropYoungStroke(s: Slot, t: number) {
+    const st = s.lastStroke;
+    if (!st || t - s.strokeBorn >= FLINCH_MS) return;
+    if (s.stroke === st) s.stroke = null;
+    removeStroke(st);
+    s.lastStroke = null;
+  }
+
+  // ✊ debounced fist; two quick clenches → undo. `act` = false while the fist is busy with something else.
+  function updateFist(s: Slot, t: number, act: boolean) {
+    if (s.balled) { s.fistFrames++; s.openFrames = 0; } else { s.openFrames++; s.fistFrames = 0; }
+    if (!s.fist && s.fistFrames >= FIST_FRAMES) {
+      s.fist = true; s.fistStart = t;
+      if (!act || t < s.ignoreFistUntil) { s.fistIgnore = true; s.lastClenchEnd = -1e9; return; }
+      dropYoungStroke(s, t);
+      if (t - s.lastClenchEnd <= CLENCH_GAP_MS) { undo(); s.fistIgnore = true; s.lastClenchEnd = -1e9; }
+    } else if (s.fist && s.openFrames >= FIST_FRAMES) {
+      s.fist = false;
+      const counts = act && !s.fistIgnore && t - s.fistStart <= CLENCH_MAX_MS;
+      s.fistIgnore = false;
+      s.lastClenchEnd = counts ? t : -1e9;
+    }
+  }
+
+  // ---------------- flick ----------------
+  // the hand was open (not drawing, not a fist) for a good part of the motion; blur makes single frames unreliable
+  const flickPose = (trail: Slot["trail"]) =>
+    !trail.some(p => p.pen) && trail.filter(p => p.open).length / trail.length >= 0.34;
+
+  function flick(s: Slot) {
+    if (shape || wheel || performance.now() - lastFlickT < FLICK_COOLDOWN_MS) return;
+    lastFlickT = performance.now(); s.trail.length = 0;
+    clearAll();
+  }
+  // a fast flick often carries the hand out of frame (or blurs it away) before it has travelled far enough
+  function flickOnExit(s: Slot) {
+    const b = s.trail.at(-1);
+    if (!b) return;
+    const recent = s.trail.filter(p => b.t - p.t <= 100); // the latest speed, not the run-up
+    const a = recent[0];
+    if (recent.length < 2 || b.t - a.t < 30) return;
+    const vx = (b.x - a.x) / ((b.t - a.t) / 1000), vy = (b.y - a.y) / ((b.t - a.t) / 1000);
+    if (Math.abs(vx) > FLICK_EXIT_SPEED && Math.abs(vx) >= Math.abs(vy) && flickPose(recent)) flick(s);
   }
 
   // ---------------- colour wheel ----------------
@@ -421,53 +542,62 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     w.theta += (handTilt(f, lm) - w.theta) * 0.35; // light smoothing
     Object.assign(w, wheelPlacement(f, lm, s));
     // knuckle-based tilt doesn't change while the fingers close, so the choice holds through the fist
-    if (!s.fist) w.idx = wheelIndex(w.theta);
-    w.fistFrames = s.fist ? w.fistFrames + 1 : 0;
+    if (!s.balled) w.idx = wheelIndex(w.theta);
+    w.fistFrames = s.balled ? w.fistFrames + 1 : 0;
     if (w.fistFrames >= POSE_FRAMES) { // ✊ pick
       penColor = PALETTE[w.idx].color;
       toast(`🎨 ${PALETTE[w.idx].name}`);
       wheel = null;
       s.wheelBlockUntil = t + WHEEL_COOLDOWN_MS;
+      s.fistIgnore = true; // opening the hand afterwards isn't half of an undo
     }
   }
 
   // ---------------- two-hand shapes ----------------
-  function resetArming() { arming.line = 0; arming.tri = 0; arming.rectSince = 0; }
+  function resetArming() { arming.line = 0; arming.circle = 0; arming.rectSince = 0; }
 
-  function shapeGeometry(kind: ShapeKind, f: Fit, a: HandInfo, b: HandInfo): Pt[] {
-    const tipA = px(f, a.lm[8]), tipB = px(f, b.lm[8]);
-    if (kind === "line") return [mid(tipA, px(f, a.lm[4])), mid(tipB, px(f, b.lm[4]))]; // the two pinch points
-    if (kind === "rect") { // index fingertips are opposite corners
-      const [x1, y1] = tipA;
-      let [x2, y2] = tipB;
+  function shapeGeometry(kind: ShapeKind, f: Fit, a: HandInfo, b: HandInfo): { pts: Pt[]; handles: Pt[] } {
+    if (kind === "line") { // between the two pinch points
+      const pts = [pinchPoint(f, a.lm), pinchPoint(f, b.lm)];
+      return { pts, handles: pts };
+    }
+    if (kind === "rect") { // the two L corners (thumb–index webs) are opposite corners
+      const [x1, y1] = crotch(f, a.lm);
+      let [x2, y2] = crotch(f, b.lm);
       const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
       if (Math.abs(w - h) < SQUARE_SNAP * Math.max(w, h)) { // near-square → square
         const side = (w + h) / 2;
         x2 = x1 + Math.sign(x2 - x1 || 1) * side; y2 = y1 + Math.sign(y2 - y1 || 1) * side;
       }
-      return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+      return { pts: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], handles: [[x1, y1], [x2, y2]] };
     }
-    // triangle: equilateral, base between the index fingertips, apex pointing up
-    const [mx, my] = mid(tipA, tipB);
-    const dx = tipB[0] - tipA[0], dy = tipB[1] - tipA[1];
-    let nx = -dy, ny = dx;
-    if (ny > 0) { nx = -nx; ny = -ny; }
-    const k = Math.sqrt(3) / 2; // height / base; (nx, ny) already has the base's length
-    return [tipA, tipB, [mx + nx * k, my + ny * k]];
+    // circle: held between the hands like a rubber band. Each hand grips it between its thumb and
+    // index tips; while the O is closed it's the size of the O's hole.
+    const gA = pinchPoint(f, a.lm), gB = pinchPoint(f, b.lm);
+    const hole = dist(mid(px(f, a.lm[8]), px(f, b.lm[8])), mid(px(f, a.lm[4]), px(f, b.lm[4])));
+    const c = mid(gA, gB), r = Math.max(dist(gA, gB), hole) / 2;
+    return { pts: [c, [c[0] + r, c[1]]], handles: [gA, gB] };
   }
 
   function shapeHeld(kind: ShapeKind, a: Slot, b: Slot) {
     if (kind === "line") return a.pinched && b.pinched;
     if (kind === "rect") return a.lPose && b.lPose;
-    return a.idxExt && b.idxExt;
+    return a.idxExt && b.idxExt && !a.balled && !b.balled; // circle: until a hand closes
   }
 
-  function placeShape(t: number) {
+  const shapeSize = (kind: ShapeKind, pts: Pt[]) => {
+    if (kind === "circle") return 2 * dist(pts[0], pts[1]);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  };
+
+  function placeShape(t: number, hands: HandInfo[]) {
     const sh = shape!;
     shape = null;
     shapeBlockUntil = t + SHAPE_COOLDOWN_MS;
-    const xs = sh.pts.map(p => p[0]), ys = sh.pts.map(p => p[1]);
-    if (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) < SHAPE_MIN_PX) return;
+    // closing the hands to let go isn't half of an undo, even if the fist forms a moment later
+    for (const { slot } of hands) slot.ignoreFistUntil = t + SHAPE_COOLDOWN_MS;
+    if (shapeSize(sh.kind, sh.pts) < SHAPE_MIN_PX) return;
     addStroke({ pts: sh.pts, active: false, color: penColor, shape: sh.kind });
   }
 
@@ -476,45 +606,52 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     if (shape) {
       if (two && shapeHeld(shape.kind, hands[0].slot, hands[1].slot)) {
         shape.releaseFrames = 0;
-        shape.pts = shapeGeometry(shape.kind, f, hands[0], hands[1]);
-      } else if (++shape.releaseFrames >= POSE_FRAMES) placeShape(t); // the last held geometry
+        Object.assign(shape, shapeGeometry(shape.kind, f, hands[0], hands[1])); // a remembered hand holds its last pose
+      } else if (++shape.releaseFrames >= POSE_FRAMES) placeShape(t, hands); // the last held geometry
       return;
     }
-    if (!two || t < shapeBlockUntil) { resetArming(); return; }
+    // a new shape needs both hands actually in view
+    if (!two || hands.some(h => h.ghost) || t < shapeBlockUntil) { resetArming(); return; }
 
     const [a, b] = hands, A = a.slot, B = b.slot;
     const palm = (A.palm + B.palm) / 2;
     const tipGap = dist(px(f, a.lm[8]), px(f, b.lm[8])) / palm;
     const thumbGap = dist(px(f, a.lm[4]), px(f, b.lm[4])) / palm;
+    const [ca, cb] = [crotch(f, a.lm), crotch(f, b.lm)];
 
-    const triPose = A.idxExt && B.idxExt && !A.pinched && !B.pinched && tipGap < TOUCH && thumbGap < TOUCH;
-    arming.tri = triPose ? arming.tri + 1 : 0;
-    arming.line = A.pinched && B.pinched && !A.balled && !B.balled ? arming.line + 1 : 0;
-    arming.rectSince = A.lPose && B.lPose && tipGap > RECT_MIN_GAP ? arming.rectSince || t : 0;
+    // ◯ index tips together and thumb tips together
+    const circlePose = A.idxExt && B.idxExt && !A.pinched && !B.pinched && tipGap < TOUCH && thumbGap < TOUCH;
+    arming.circle = circlePose ? arming.circle + 1 : 0;
+    arming.line = A.pinched && B.pinched ? arming.line + 1 : 0;
+    // ▭ two Ls on a diagonal (hands side by side making an O also pass through two Ls, but level)
+    const rectPose = A.lPose && B.lPose && tipGap > RECT_MIN_GAP
+      && Math.abs(ca[0] - cb[0]) > RECT_MIN_SIDE * palm && Math.abs(ca[1] - cb[1]) > RECT_MIN_SIDE * palm;
+    arming.rectSince = rectPose ? arming.rectSince || t : 0;
 
     const kind: ShapeKind | null =
-      arming.tri >= SHAPE_ARM_FRAMES ? "tri"
+      arming.circle >= SHAPE_ARM_FRAMES ? "circle"
       : arming.line >= SHAPE_ARM_FRAMES ? "line"
       : arming.rectSince && t - arming.rectSince >= RECT_HOLD_MS ? "rect"
       : null;
     if (!kind) return;
     resetArming();
-    for (const s of [A, B]) { endStroke(s); s.pinchStart = -1e9; s.lastTapEnd = -1e9; } // releasing isn't an undo tap
-    shape = { kind, pts: shapeGeometry(kind, f, a, b), releaseFrames: 0 };
+    for (const s of [A, B]) { dropYoungStroke(s, t); endStroke(s); s.lastClenchEnd = -1e9; }
+    shape = { kind, ...shapeGeometry(kind, f, a, b), releaseFrames: 0 };
   }
 
   function process(result: HandLandmarkerResult, f: Fit, t: number): HandInfo[] {
     const hands = result.landmarks;
-    trackHands(hands.map(lm => px(f, lm[0])));
-    const info = hands.map((lm, i) => analyse(f, lm, slots[i], t));
+    const live = trackHands(hands.map(lm => px(f, lm[0])), f, t);
+    const info = hands.map((lm, i) => analyse(f, lm, live[i], t));
+    for (const s of slots) if (s.lostAt !== null) info.push({ lm: s.lm!, slot: s, ghost: true });
     updateShapes(f, info, t);
     return info;
   }
 
   // the first hand's index fingertip is the on-screen cursor (start screen buttons, back button)
-  function trackPointer(result: HandLandmarkerResult, f: Fit, t: number) {
+  function trackPointer(result: HandLandmarkerResult, f: Fit, t: number, drawing: boolean) {
     const lm = result.landmarks[0];
-    if (!lm) { cursorFx.reset(); cursorFy.reset(); onPointer?.(null); return; }
+    if (!lm || drawing) { cursorFx.reset(); cursorFy.reset(); onPointer?.(null); return; }
     const [x, y] = toScreen(f, cursorFx.filter(lm[8].x * f.vw, t), cursorFy.filter(lm[8].y * f.vh, t));
     onPointer?.({ x, y });
   }
@@ -522,10 +659,13 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
   // ---------------- rendering ----------------
   const penWidth = (f: Fit) => PEN_SIZE * f.dh / 720;
 
-  function tracePolyline(pts: Pt[], closed: boolean) {
-    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-    for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]);
-    if (closed) ctx.closePath();
+  function traceShape(f: Fit, kind: ShapeKind, pts: Pt[]) {
+    const P = pts.map(p => toScreen(f, p[0], p[1]));
+    ctx.beginPath();
+    if (kind === "circle") { ctx.arc(P[0][0], P[0][1], dist(P[0], P[1]), 0, 2 * Math.PI); return; }
+    ctx.moveTo(P[0][0], P[0][1]);
+    for (const p of P.slice(1)) ctx.lineTo(p[0], p[1]);
+    if (kind === "rect") ctx.closePath();
   }
 
   function drawStrokes(f: Fit) {
@@ -535,8 +675,8 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
     for (const s of strokes) {
       if (!s.pts.length) continue;
       ctx.strokeStyle = ctx.fillStyle = ctx.shadowColor = s.color;
+      if (s.shape) { traceShape(f, s.shape, s.pts); ctx.stroke(); continue; }
       const pts = s.pts.map(p => toScreen(f, p[0], p[1]));
-      if (s.shape) { tracePolyline(pts, s.shape !== "line"); ctx.stroke(); continue; }
       if (pts.length === 1) { ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], w / 2, 0, 7); ctx.fill(); continue; }
       ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
       for (let i = 1; i < pts.length - 1; i++) {
@@ -551,15 +691,17 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
 
   function drawShapePreview(f: Fit) {
     if (!shape) return;
-    const pts = shape.pts.map(p => toScreen(f, p[0], p[1]));
     ctx.save();
     ctx.lineCap = ctx.lineJoin = "round";
     ctx.lineWidth = penWidth(f); ctx.strokeStyle = penColor; ctx.globalAlpha = 0.85;
     ctx.setLineDash([penWidth(f) * 2, penWidth(f) * 2]);
-    tracePolyline(pts, shape.kind !== "line"); ctx.stroke();
+    traceShape(f, shape.kind, shape.pts); ctx.stroke();
     ctx.setLineDash([]); ctx.globalAlpha = 1;
     ctx.fillStyle = "#fffdf5"; ctx.strokeStyle = "#1d1b16"; ctx.lineWidth = 2;
-    for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.fill(); ctx.stroke(); } // handles
+    for (const h of shape.handles) { // where the hands are holding it
+      const [x, y] = toScreen(f, h[0], h[1]);
+      ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -590,25 +732,33 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
   }
 
   function drawHands(f: Fit, info: HandInfo[]) {
-    for (const { lm, slot } of info) {
+    for (const { lm, slot, ghost } of info) {
       const P = lm.map(p => toScreen(f, ...px(f, p)));
+      ctx.globalAlpha = ghost ? 0.3 : 1; // a remembered hand: faded where it was last seen
       ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 2;
       ctx.beginPath();
       for (const c of connections) { ctx.moveTo(...P[c.start]); ctx.lineTo(...P[c.end]); }
       ctx.stroke();
       ctx.fillStyle = "rgba(255,255,255,.8)";
       for (const p of P) { ctx.beginPath(); ctx.arc(p[0], p[1], 2.5, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+      if (ghost) continue;
 
-      if (slot.pinched && !shape) { // pinch feedback
-        const m = [(P[4][0] + P[8][0]) / 2, (P[4][1] + P[8][1]) / 2];
-        ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(m[0], m[1], 12, 0, 7); ctx.stroke();
+      // pen: a ring where the pinch will land, filled while drawing
+      if (slot.pen && !shape && wheel?.slot !== slot && !slot.balled) {
+        const [x, y] = toScreen(f, ...slot.pen);
+        const r = Math.max(penWidth(f) / 2 + 3, 6);
+        ctx.lineWidth = 2.5; ctx.strokeStyle = slot.stroke ? "#fff" : penColor; ctx.fillStyle = penColor;
+        ctx.beginPath(); ctx.arc(x, y, slot.stroke ? r : r + 4, 0, 7);
+        if (slot.stroke) ctx.fill();
+        ctx.stroke();
       }
-      if (slot.pointing && slot.tip && !shape && wheel?.slot !== slot) { // pen cursor
-        const [x, y] = toScreen(f, ...slot.tip);
-        const w = penWidth(f);
-        ctx.fillStyle = penColor; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(x, y, Math.max(w / 2 + 3, 6), 0, 7); ctx.fill(); ctx.stroke();
+      if (debug) {
+        const tags = [slot.pinched && "PINCH", slot.fist && "FIST", slot.lPose && "L", slot.openPalm && "OPEN"].filter(Boolean).join(" ");
+        const text = `index ${slot.dbg.index.toFixed(2)} · pinch ${slot.dbg.pinch.toFixed(2)}  ${tags}`;
+        ctx.font = "600 13px ui-monospace, monospace"; ctx.textAlign = "center";
+        ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.fillStyle = "#fffdf5";
+        ctx.strokeText(text, P[0][0], P[0][1] + 24); ctx.fillText(text, P[0][0], P[0][1] + 24);
       }
     }
   }
@@ -624,12 +774,19 @@ export function createAirDraw({ video, canvas, onToast, onError, onPointer }: Ai
       const t = performance.now(); // must increase on every detectForVideo call
       try {
         const result = landmarker.detectForVideo(video, t);
-        trackPointer(result, f, t);
         if (mode === "draw") lastInfo = process(result, f, t);
+        // no cursor while the first hand is drawing, so ink near the back button can't press it
+        const first = mode === "draw" ? slots[0] : undefined;
+        trackPointer(result, f, t, !!first && first.lostAt === null && (first.pinched || !!first.stroke));
       } catch (e) {
         onError("Hand tracking error: " + (e instanceof Error ? e.message : String(e)));
       }
-      if (hook) Object.assign(hook, { penColor, wheel: wheel?.idx ?? null, shape: shape?.kind ?? null });
+      if (hook) {
+        Object.assign(hook, {
+          penColor, wheel: wheel?.idx ?? null, shape: shape?.kind ?? null,
+          hands: slots.filter(s => s.lostAt === null).length, remembered: slots.filter(s => s.lostAt !== null).length,
+        });
+      }
     }
     if (mode === "menu") return; // the start screen covers the canvas
 

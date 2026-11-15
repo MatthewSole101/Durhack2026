@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { TOAST_MS } from "./constants";
+import { preload } from "react-dom";
+import { LOCAL_MODEL_URL, LOCAL_WASM_BASE, TOAST_MS } from "./constants";
 import { createAirDraw, type AirDrawEngine } from "./engine";
 import GestureHints from "./GestureHints";
 import HandCursor, { type HandCursorHandle } from "@/features/hand-cursor/HandCursor";
@@ -17,6 +18,12 @@ const cameraError = (e: unknown) =>
 type Card = { lang: LangCode; word: Word };
 
 export default function AirDraw() {
+  // Start downloading the hand-tracking runtime and model from the HTML <head>, before any JS runs.
+  // The options match how they're fetched later (engine.ts / MediaPipe's loader) so the browser reuses them.
+  preload(`${LOCAL_WASM_BASE}/vision_wasm_internal.js`, { as: "script", crossOrigin: "anonymous" });
+  preload(`${LOCAL_WASM_BASE}/vision_wasm_internal.wasm`, { as: "fetch", crossOrigin: "anonymous" });
+  preload(LOCAL_MODEL_URL, { as: "fetch", crossOrigin: "anonymous" });
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<AirDrawEngine | null>(null);
